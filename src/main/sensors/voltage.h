@@ -17,41 +17,85 @@
 
 #pragma once
 
-#define VBAT_SCALE_DEFAULT 110
-#define VBAT_RESDIVVAL_DEFAULT 10
-#define VBAT_RESDIVMULTIPLIER_DEFAULT 1
+#include "voltage_ids.h"
+
+//
+// meters
+//
+
+typedef enum {
+    VOLTAGE_METER_NONE = 0,
+    VOLTAGE_METER_ADC,
+    VOLTAGE_METER_ESC
+} voltageMeterSource_e;
+
+// WARNING - do not mix usage of VOLTAGE_METER_* and VOLTAGE_SENSOR_*, they are separate concerns.
+
+typedef struct voltageMeter_s {
+    uint16_t filtered;                      // voltage in 0.1V steps
+    uint16_t unfiltered;                    // voltage in 0.1V steps
+} voltageMeter_t;
+
+
+//
+// sensors
+//
+
+typedef enum {
+    VOLTAGE_SENSOR_TYPE_ADC_RESISTOR_DIVIDER = 0,
+    VOLTAGE_SENSOR_TYPE_ESC
+} voltageSensorType_e;
+
+
+//
+// adc sensors
+//
+
 #define VBAT_SCALE_MIN 0
 #define VBAT_SCALE_MAX 255
 
 #define VBATT_LPF_FREQ  1.0f
 
-#ifndef MAX_VOLTAGE_METERS
-#define MAX_VOLTAGE_METERS 1 // VBAT - some boards have external, 12V and 5V meters.
+#ifndef MAX_VOLTAGE_SENSOR_ADC
+#define MAX_VOLTAGE_SENSOR_ADC 1 // VBAT - some boards have external, 12V, 9V and 5V meters.
 #endif
 
-typedef struct voltageMeterConfig_s {
+typedef enum {
+    VOLTAGE_SENSOR_ADC_VBAT = 0,
+    VOLTAGE_SENSOR_ADC_12V = 1,
+    VOLTAGE_SENSOR_ADC_9V = 2,
+    VOLTAGE_SENSOR_ADC_5V = 3
+} voltageSensorADC_e; // see also voltageMeterADCtoIDMap
+
+
+typedef struct voltageSensorADCConfig_s {
     uint8_t vbatscale;                      // adjust this to match battery voltage to reported value
     uint8_t vbatresdivval;                  // resistor divider R2 (default NAZE 10(K))
     uint8_t vbatresdivmultiplier;           // multiplier for scale (e.g. 2.5:1 ratio with multiplier of 4 can use '100' instead of '25' in ratio) to get better precision
-} voltageMeterConfig_t;
+} voltageSensorADCConfig_t;
 
-PG_DECLARE_ARR(voltageMeterConfig_t, MAX_VOLTAGE_METERS, voltageMeterConfig);
+PG_DECLARE_ARRAY(voltageSensorADCConfig_t, MAX_VOLTAGE_SENSOR_ADC, voltageSensorADCConfig);
 
-typedef struct voltageMeterState_s {
-    uint16_t vbat;                // battery voltage in 0.1V steps (filtered)
-    uint16_t vbatRaw;
-    uint16_t vbatLatestADC;       // most recent unsmoothed raw reading from vbat ADC
-    biquadFilter_t vbatFilterState;
-} voltageMeterState_t;
+//
+// Main API
+//
+void voltageMeterReset(voltageMeter_t *voltageMeter);
 
-extern voltageMeterState_t voltageMeterStates[MAX_VOLTAGE_METERS];
+void voltageMeterADCInit(void);
+void voltageMeterADCRefresh(void);
+void voltageMeterADCRead(voltageSensorADC_e adcChannel, voltageMeter_t *voltageMeter);
+
+void voltageMeterESCInit(void);
+void voltageMeterESCRefresh(void);
+void voltageMeterESCReadCombined(voltageMeter_t *voltageMeter);
+void voltageMeterESCReadMotor(uint8_t motor, voltageMeter_t *voltageMeter);
 
 
-void voltageMeterInit(void);
-void voltageMeterUpdate(void);
+//
+// API for reading/configuring current meters by id.
+//
+extern const uint8_t voltageMeterADCtoIDMap[MAX_VOLTAGE_SENSOR_ADC];
 
-voltageMeterState_t *getVoltageMeter(uint8_t index);
-uint16_t getVoltageForADCChannel(uint8_t channel);
-uint16_t getLatestVoltageForADCChannel(uint8_t channel);
-
-voltageMeterConfig_t *getVoltageMeterConfig(const uint8_t channel);
+extern const uint8_t supportedVoltageMeterCount;
+extern const uint8_t voltageMeterIds[];
+void voltageMeterRead(voltageMeterId_e id, voltageMeter_t *voltageMeter);

@@ -17,31 +17,59 @@
 
 #include "stdbool.h"
 #include "stdint.h"
-#include "stdlib.h"
 
 #include <platform.h>
-#include "build/build_config.h"
 
-#include "config/parameter_group.h"
+#include "common/utils.h"
+
 #include "config/feature.h"
+#include "config/parameter_group.h"
+#include "config/parameter_group_ids.h"
 
-#include "io/statusindicator.h"
-
-#include "fc/runtime_config.h"
-#include "fc/config.h"
-#include "fc/rc_controls.h"
-
-#include "drivers/gpio.h"
 #include "drivers/sound_beeper.h"
 #include "drivers/system.h"
-#include "sensors/battery.h"
-#include "sensors/sensors.h"
+
+#include "fc/config.h"
+#include "fc/runtime_config.h"
+
+#include "io/beeper.h"
+#include "io/statusindicator.h"
+#include "io/vtx.h"
 
 #ifdef GPS
 #include "io/gps.h"
 #endif
 
-#include "io/beeper.h"
+#include "sensors/battery.h"
+#include "sensors/sensors.h"
+
+
+PG_REGISTER_WITH_RESET_TEMPLATE(beeperDevConfig_t, beeperDevConfig, PG_BEEPER_DEV_CONFIG, 0);
+
+#ifdef BEEPER_INVERTED
+#define IS_OPEN_DRAIN   false
+#define IS_INVERTED     true
+#else
+#define IS_OPEN_DRAIN   true
+#define IS_INVERTED     false
+#endif
+
+#ifdef BEEPER
+#define BEEPER_PIN      BEEPER
+#ifndef BEEPER_PWM_HZ
+#define BEEPER_PWM_HZ   0
+#endif
+#else
+#define BEEPER_PIN      NONE
+#define BEEPER_PWM_HZ   0
+#endif
+
+PG_RESET_TEMPLATE(beeperDevConfig_t, beeperDevConfig,
+    .isOpenDrain = IS_OPEN_DRAIN,
+    .isInverted = IS_INVERTED,
+    .ioTag = IO_TAG(BEEPER_PIN),
+    .frequency = BEEPER_PWM_HZ
+);
 
 #if FLASH_SIZE > 64
 #define BEEPER_NAMES
@@ -136,7 +164,7 @@ static uint32_t beeperNextToggleTime = 0;
 // Time of last arming beep in microseconds (for blackbox)
 static uint32_t armingBeepTimeMicros = 0;
 
-static void beeperProcessCommand(void);
+static void beeperProcessCommand(timeUs_t currentTimeUs);
 
 typedef struct beeperTableEntry_s {
     uint8_t mode;
@@ -153,23 +181,28 @@ typedef struct beeperTableEntry_s {
 #define BEEPER_ENTRY(a,b,c,d) a,b,c
 #endif
 
-static const beeperTableEntry_t beeperTable[] = {
+/*static*/ const beeperTableEntry_t beeperTable[] = {
     { BEEPER_ENTRY(BEEPER_GYRO_CALIBRATED,       0, beep_gyroCalibrated,   "GYRO_CALIBRATED") },
-    { BEEPER_ENTRY(BEEPER_RX_LOST_LANDING,       1, beep_sos,              "RX_LOST_LANDING") },
-    { BEEPER_ENTRY(BEEPER_RX_LOST,               2, beep_txLostBeep,       "RX_LOST") },
+    { BEEPER_ENTRY(BEEPER_RX_LOST,               1, beep_txLostBeep,       "RX_LOST") },
+    { BEEPER_ENTRY(BEEPER_RX_LOST_LANDING,       2, beep_sos,              "RX_LOST_LANDING") },
     { BEEPER_ENTRY(BEEPER_DISARMING,             3, beep_disarmBeep,       "DISARMING") },
     { BEEPER_ENTRY(BEEPER_ARMING,                4, beep_armingBeep,       "ARMING")  },
     { BEEPER_ENTRY(BEEPER_ARMING_GPS_FIX,        5, beep_armedGpsFix,      "ARMING_GPS_FIX") },
     { BEEPER_ENTRY(BEEPER_BAT_CRIT_LOW,          6, beep_critBatteryBeep,  "BAT_CRIT_LOW") },
     { BEEPER_ENTRY(BEEPER_BAT_LOW,               7, beep_lowBatteryBeep,   "BAT_LOW") },
-    { BEEPER_ENTRY(BEEPER_GPS_STATUS,            8, beep_multiBeeps,       NULL) },
+    { BEEPER_ENTRY(BEEPER_GPS_STATUS,            8, beep_multiBeeps,       "GPS_STATUS") },
     { BEEPER_ENTRY(BEEPER_RX_SET,                9, beep_shortBeep,        "RX_SET") },
     { BEEPER_ENTRY(BEEPER_ACC_CALIBRATION,       10, beep_2shortBeeps,     "ACC_CALIBRATION") },
     { BEEPER_ENTRY(BEEPER_ACC_CALIBRATION_FAIL,  11, beep_2longerBeeps,    "ACC_CALIBRATION_FAIL") },
     { BEEPER_ENTRY(BEEPER_READY_BEEP,            12, beep_readyBeep,       "READY_BEEP") },
-    { BEEPER_ENTRY(BEEPER_MULTI_BEEPS,           13, beep_multiBeeps,      NULL) }, // FIXME having this listed makes no sense since the beep array will not be initialised.
+    { BEEPER_ENTRY(BEEPER_MULTI_BEEPS,           13, beep_multiBeeps,      "MULTI_BEEPS") }, // FIXME having this listed makes no sense since the beep array will not be initialised.
     { BEEPER_ENTRY(BEEPER_DISARM_REPEAT,         14, beep_disarmRepeatBeep, "DISARM_REPEAT") },
     { BEEPER_ENTRY(BEEPER_ARMED,                 15, beep_armedBeep,       "ARMED") },
+    { BEEPER_ENTRY(BEEPER_SYSTEM_INIT,           16, NULL,                 "SYSTEM_INIT") },
+    { BEEPER_ENTRY(BEEPER_USB,                   17, NULL,                 "ON_USB") },
+    { BEEPER_ENTRY(BEEPER_BLACKBOX_ERASE,        18, beep_2shortBeeps,     "BLACKBOX_ERASE") },
+    { BEEPER_ENTRY(BEEPER_ALL,                   19, NULL,                 "ALL") },
+    { BEEPER_ENTRY(BEEPER_PREFERENCE,            20, NULL,                 "PREFERRED") },
 };
 
 static const beeperTableEntry_t *currentBeeperEntry = NULL;
@@ -182,7 +215,12 @@ static const beeperTableEntry_t *currentBeeperEntry = NULL;
  */
 void beeper(beeperMode_e mode)
 {
-    if (mode == BEEPER_SILENCE) {
+    if (
+        mode == BEEPER_SILENCE || (
+            (getBeeperOffMask() & (1 << (BEEPER_USB - 1)))
+            && (batteryConfig()->voltageMeterSource != VOLTAGE_METER_NONE && (getBatteryCellCount() == 0))
+        )
+    ) {
         beeperSilence();
         return;
     }
@@ -218,9 +256,12 @@ void beeper(beeperMode_e mode)
 
 void beeperSilence(void)
 {
-    beeperIsOn = 0;
     BEEP_OFF;
-    warningLedBeeper(false);
+    warningLedDisable();
+    warningLedRefresh();
+
+
+    beeperIsOn = 0;
 
     beeperNextToggleTime = 0;
     beeperPos = 0;
@@ -273,10 +314,10 @@ void beeperGpsStatus(void)
  * Beeper handler function to be called periodically in loop. Updates beeper
  * state via time schedule.
  */
-void beeperUpdate(void)
+void beeperUpdate(timeUs_t currentTimeUs)
 {
     // If beeper option from AUX switch has been selected
-    if (rcModeIsActive(BOXBEEPERON)) {
+    if (IS_RC_MODE_ACTIVE(BOXBEEPERON)) {
 #ifdef GPS
         if (feature(FEATURE_GPS)) {
             beeperGpsStatus();
@@ -293,16 +334,17 @@ void beeperUpdate(void)
         return;
     }
 
-    uint32_t now = millis();
-    if (beeperNextToggleTime > now) {
+    if (beeperNextToggleTime > currentTimeUs) {
         return;
     }
 
     if (!beeperIsOn) {
         beeperIsOn = 1;
         if (currentBeeperEntry->sequence[beeperPos] != 0) {
-            BEEP_ON;
-            warningLedBeeper(true);
+            if (!(getBeeperOffMask() & (1 << (currentBeeperEntry->mode - 1))))
+                BEEP_ON;
+            warningLedEnable();
+            warningLedRefresh();
             // if this was arming beep then mark time (for blackbox)
             if (
                 beeperPos == 0
@@ -315,17 +357,18 @@ void beeperUpdate(void)
         beeperIsOn = 0;
         if (currentBeeperEntry->sequence[beeperPos] != 0) {
             BEEP_OFF;
-            warningLedBeeper(false);
+            warningLedDisable();
+            warningLedRefresh();
         }
     }
 
-    beeperProcessCommand();
+    beeperProcessCommand(currentTimeUs);
 }
 
 /*
  * Calculates array position when next to change beeper state is due.
  */
-static void beeperProcessCommand(void)
+static void beeperProcessCommand(timeUs_t currentTimeUs)
 {
     if (currentBeeperEntry->sequence[beeperPos] == BEEPER_COMMAND_REPEAT) {
         beeperPos = 0;
@@ -333,7 +376,7 @@ static void beeperProcessCommand(void)
         beeperSilence();
     } else {
         // Otherwise advance the sequence and calculate next toggle time
-        beeperNextToggleTime = millis() + 10 * currentBeeperEntry->sequence[beeperPos];
+        beeperNextToggleTime = currentTimeUs + 1000 * 10 * currentBeeperEntry->sequence[beeperPos];
         beeperPos++;
     }
 }
@@ -377,16 +420,25 @@ int beeperTableEntryCount(void)
     return (int)BEEPER_TABLE_ENTRY_COUNT;
 }
 
+/*
+ * Returns true if the beeper is on, false otherwise
+ */
+bool isBeeperOn(void)
+{
+    return beeperIsOn;
+}
+
 #else
 
 // Stub out beeper functions if #BEEPER not defined
 void beeper(beeperMode_e mode) {UNUSED(mode);}
 void beeperSilence(void) {}
 void beeperConfirmationBeeps(uint8_t beepCount) {UNUSED(beepCount);}
-void beeperUpdate(void) {}
+void beeperUpdate(timeUs_t currentTimeUs) {UNUSED(currentTimeUs);}
 uint32_t getArmingBeepTimeMicros(void) {return 0;}
 beeperMode_e beeperModeForTableIndex(int idx) {UNUSED(idx); return BEEPER_SILENCE;}
 const char *beeperNameForTableIndex(int idx) {UNUSED(idx); return NULL;}
 int beeperTableEntryCount(void) {return 0;}
+bool isBeeperOn(void) {return false;}
 
 #endif

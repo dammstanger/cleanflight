@@ -17,12 +17,16 @@
 
 #pragma once
 
+#include <stdbool.h>
+
+#include "config/parameter_group.h"
+
 typedef enum {
     BOXARM = 0,
     BOXANGLE,
     BOXHORIZON,
     BOXBARO,
-    // BOXVARIO,
+    BOXANTIGRAVITY,
     BOXMAG,
     BOXHEADFREE,
     BOXHEADADJ,
@@ -47,9 +51,16 @@ typedef enum {
     BOXBLACKBOX,
     BOXFAILSAFE,
     BOXAIRMODE,
-    BOXVTX,
+    BOX3DDISABLESWITCH,
+    BOXFPVANGLEMIX,
+    BOXBLACKBOXERASE,
     CHECKBOX_ITEM_COUNT
 } boxId_e;
+
+extern uint32_t rcModeActivationMask;
+
+#define IS_RC_MODE_ACTIVE(modeId) ((1 << (modeId)) & rcModeActivationMask)
+#define ACTIVATE_RC_MODE(modeId) (rcModeActivationMask |= (1 << modeId))
 
 typedef enum rc_alias {
     ROLL = 0,
@@ -71,10 +82,19 @@ typedef enum {
     THROTTLE_HIGH
 } throttleStatus_e;
 
+#define AIRMODEDEADBAND 12
+
 typedef enum {
     NOT_CENTERED = 0,
     CENTERED
 } rollPitchStatus_e;
+
+typedef enum {
+    RC_SMOOTHING_OFF = 0,
+    RC_SMOOTHING_DEFAULT,
+    RC_SMOOTHING_AUTO,
+    RC_SMOOTHING_MANUAL
+} rcSmoothing_t;
 
 #define ROL_LO (1 << (2 * ROLL))
 #define ROL_CE (3 << (2 * ROLL))
@@ -94,8 +114,8 @@ typedef enum {
 #define CHANNEL_RANGE_MIN 900
 #define CHANNEL_RANGE_MAX 2100
 
-#define MODE_STEP_TO_CHANNEL_VALUE(step) (CHANNEL_RANGE_MIN + 25 * (step))
-#define CHANNEL_VALUE_TO_STEP(channelValue) ((constrain((channelValue), CHANNEL_RANGE_MIN, CHANNEL_RANGE_MAX) - CHANNEL_RANGE_MIN) / 25)
+#define MODE_STEP_TO_CHANNEL_VALUE(step) (CHANNEL_RANGE_MIN + 25 * step)
+#define CHANNEL_VALUE_TO_STEP(channelValue) ((constrain(channelValue, CHANNEL_RANGE_MIN, CHANNEL_RANGE_MAX) - CHANNEL_RANGE_MIN) / 25)
 
 #define MIN_MODE_RANGE_STEP 0
 #define MAX_MODE_RANGE_STEP ((CHANNEL_RANGE_MAX - CHANNEL_RANGE_MIN) / 25)
@@ -123,13 +143,13 @@ typedef struct modeActivationCondition_s {
     channelRange_t range;
 } modeActivationCondition_t;
 
-#define IS_RANGE_USABLE(range) ((range)->startStep < (range)->endStep)
+PG_DECLARE_ARRAY(modeActivationCondition_t, MAX_MODE_ACTIVATION_CONDITION_COUNT, modeActivationConditions);
 
 typedef struct modeActivationProfile_s {
     modeActivationCondition_t modeActivationConditions[MAX_MODE_ACTIVATION_CONDITION_COUNT];
 } modeActivationProfile_t;
 
-PG_DECLARE_PROFILE(modeActivationProfile_t, modeActivationProfile);
+#define IS_RANGE_USABLE(range) ((range)->startStep < (range)->endStep)
 
 extern int16_t rcCommand[4];
 
@@ -138,18 +158,24 @@ typedef struct rcControlsConfig_s {
     uint8_t yaw_deadband;                   // introduce a deadband around the stick center for yaw axis. Must be greater than zero.
     uint8_t alt_hold_deadband;              // defines the neutral zone of throttle stick during altitude hold, default setting is +/-40
     uint8_t alt_hold_fast_change;           // when disabled, turn off the althold when throttle stick is out of deadband defined with alt_hold_deadband; when enabled, altitude changes slowly proportional to stick movement
-    int8_t yaw_control_direction;           // change control direction of yaw (inverted, normal)
-    uint16_t deadband3d_throttle;           // default throttle deadband from MIDRC
+    bool yaw_control_reversed;            // invert control direction of yaw
 } rcControlsConfig_t;
 
-PG_DECLARE_PROFILE(rcControlsConfig_t, rcControlsConfig);
+PG_DECLARE(rcControlsConfig_t, rcControlsConfig);
+
+typedef struct flight3DConfig_s {
+    uint16_t deadband3d_low;                // min 3d value
+    uint16_t deadband3d_high;               // max 3d value
+    uint16_t neutral3d;                     // center 3d value
+    uint16_t deadband3d_throttle;           // default throttle deadband from MIDRC
+} flight3DConfig_t;
+
+PG_DECLARE(flight3DConfig_t, flight3DConfig);
 
 typedef struct armingConfig_s {
-    // Arming configuration
-    uint8_t retarded_arm;                   // allow disarm/arm on throttle down + roll left/right
+    uint8_t gyro_cal_on_first_arm;          // allow disarm/arm on throttle down + roll left/right
     uint8_t disarm_kill_switch;             // allow disarm via AUX switch regardless of throttle value
     uint8_t auto_disarm_delay;              // allow automatically disarming multicopters after auto_disarm_delay seconds of zero throttle. Disabled when 0
-    uint8_t max_arm_angle;                  // specifies the maximum angle allow arming at.
 } armingConfig_t;
 
 PG_DECLARE(armingConfig_t, armingConfig);
@@ -157,20 +183,18 @@ PG_DECLARE(armingConfig_t, armingConfig);
 bool areUsingSticksToArm(void);
 
 bool areSticksInApModePosition(uint16_t ap_mode);
-struct rxConfig_s;
-throttleStatus_e calculateThrottleStatus(struct rxConfig_s *rxConfig, uint16_t deadband3d_throttle);
-rollPitchStatus_e calculateRollPitchCenterStatus(struct rxConfig_s *rxConfig);
-void processRcStickPositions(struct rxConfig_s *rxConfig, throttleStatus_e throttleStatus, bool retarded_arm, bool disarm_kill_switch);
+throttleStatus_e calculateThrottleStatus(void);
+void processRcStickPositions(throttleStatus_e throttleStatus);
 
-bool rcModeIsActive(boxId_e modeId);
-void rcModeUpdateActivated(modeActivationCondition_t *modeActivationConditions);
-bool rcModeIsActivationConditionPresent(modeActivationCondition_t *modeActivationConditions, boxId_e modeId);
+bool isRangeActive(uint8_t auxChannelIndex, const channelRange_t *range);
+void updateActivatedModes(void);
 
+bool isAirmodeActive(void);
+bool isAntiGravityModeActive(void);
 
 bool isUsingSticksForArming(void);
 
 int32_t getRcStickDeflection(int32_t axis, uint16_t midrc);
-
-void useRcControlsConfig(modeActivationCondition_t *modeActivationConditions);
-
-bool isRangeActive(uint8_t auxChannelIndex, channelRange_t *range);
+bool isModeActivationConditionPresent(const modeActivationCondition_t *modeActivationConditions, boxId_e modeId);
+struct pidProfile_s;
+void useRcControlsConfig(const modeActivationCondition_t *modeActivationConditions, struct pidProfile_s *pidProfileToUse);

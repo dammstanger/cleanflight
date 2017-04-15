@@ -473,6 +473,7 @@ void SYSCFG_SRAMWRPEnable(uint32_t SYSCFG_SRAMWRP)
 #endif
 FlagStatus SYSCFG_GetFlagStatus(uint32_t SYSCFG_Flag)
 {
+    (void)SYSCFG_Flag;
   FlagStatus bitstatus = RESET;
 
   /* Check the parameter */

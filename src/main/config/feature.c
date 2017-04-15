@@ -17,17 +17,31 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdlib.h>
 
-#include <platform.h>
+#include "platform.h"
 
+#include "config/feature.h"
 #include "config/parameter_group.h"
 #include "config/parameter_group_ids.h"
 
-#include "config/feature.h"
 
 static uint32_t activeFeaturesLatch = 0;
 
-PG_REGISTER(featureConfig_t, featureConfig, PG_FEATURE_CONFIG, 0);
+void intFeatureSet(uint32_t mask, uint32_t *features)
+{
+    *features |= mask;
+}
+
+void intFeatureClear(uint32_t mask, uint32_t *features)
+{
+    *features &= ~(mask);
+}
+
+void intFeatureClearAll(uint32_t *features)
+{
+    *features = 0;
+}
 
 void latchActiveFeatures()
 {
@@ -46,17 +60,17 @@ bool feature(uint32_t mask)
 
 void featureSet(uint32_t mask)
 {
-    featureConfig()->enabledFeatures |= mask;
+    intFeatureSet(mask, &featureConfigMutable()->enabledFeatures);
 }
 
 void featureClear(uint32_t mask)
 {
-    featureConfig()->enabledFeatures &= ~(mask);
+    intFeatureClear(mask, &featureConfigMutable()->enabledFeatures);
 }
 
 void featureClearAll()
 {
-    featureConfig()->enabledFeatures = 0;
+    intFeatureClearAll(&featureConfigMutable()->enabledFeatures);
 }
 
 uint32_t featureMask(void)

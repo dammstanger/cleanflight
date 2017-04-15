@@ -18,15 +18,19 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#include <platform.h>
+#include "platform.h"
 
 #include "system.h"
-#include "gpio.h"
+#include "io.h"
 #include "bus_i2c.h"
 
 #include "sensor.h"
 #include "accgyro.h"
 #include "accgyro_mma845x.h"
+
+#ifndef MMA8452_I2C_INSTANCE
+#define MMA8452_I2C_INSTANCE I2CDEV_1
+#endif
 
 // MMA8452QT, Standard address 0x1C
 // ACC_INT2 routed to PA5
@@ -77,71 +81,59 @@
 
 static uint8_t device_id;
 
-static void mma8452Init(acc_t *acc);
-static bool mma8452Read(int16_t *accelData);
-
-bool mma8452Detect(acc_t *acc)
+static inline void mma8451ConfigureInterrupt(void)
 {
-    bool ack = false;
-    uint8_t sig = 0;
+#ifdef MMA8451_INT_PIN
+    IOInit(IOGetByTag(IO_TAG(MMA8451_INT_PIN)), OWNER_MPU_EXTI, 0);
+    // TODO - maybe pullup / pulldown ?
+    IOConfigGPIO(IOGetByTag(IO_TAG(MMA8451_INT_PIN)), IOCFG_IN_FLOATING);   
+#endif
 
-    ack = i2cRead(MMA8452_ADDRESS, MMA8452_WHO_AM_I, 1, &sig);
+    i2cWrite(MPU_I2C_INSTANCE, MMA8452_ADDRESS, MMA8452_CTRL_REG3, MMA8452_CTRL_REG3_IPOL); // Interrupt polarity (active HIGH)
+    i2cWrite(MPU_I2C_INSTANCE, MMA8452_ADDRESS, MMA8452_CTRL_REG4, MMA8452_CTRL_REG4_INT_EN_DRDY); // Enable DRDY interrupt (unused by this driver)
+    i2cWrite(MPU_I2C_INSTANCE, MMA8452_ADDRESS, MMA8452_CTRL_REG5, 0); // DRDY routed to INT2
+}
+
+static void mma8452Init(accDev_t *acc)
+{
+
+    i2cWrite(MPU_I2C_INSTANCE, MMA8452_ADDRESS, MMA8452_CTRL_REG1, 0); // Put device in standby to configure stuff
+    i2cWrite(MPU_I2C_INSTANCE, MMA8452_ADDRESS, MMA8452_XYZ_DATA_CFG, MMA8452_FS_RANGE_8G);
+    i2cWrite(MPU_I2C_INSTANCE, MMA8452_ADDRESS, MMA8452_HP_FILTER_CUTOFF, MMA8452_HPF_CUTOFF_LV4);
+    i2cWrite(MPU_I2C_INSTANCE, MMA8452_ADDRESS, MMA8452_CTRL_REG2, MMA8452_CTRL_REG2_MODS_HR | MMA8452_CTRL_REG2_MODS_HR << 3); // High resolution measurement in both sleep and active modes
+
+    mma8451ConfigureInterrupt();
+
+    i2cWrite(MPU_I2C_INSTANCE, MMA8452_ADDRESS, MMA8452_CTRL_REG1, MMA8452_CTRL_REG1_LNOISE | MMA8452_CTRL_REG1_ACTIVE); // Turn on measurements, low noise at max scale mode, Data Rate 800Hz. LNoise mode makes range +-4G.
+
+    acc->acc_1G = 256;
+}
+
+static bool mma8452Read(accDev_t *acc)
+{
+    uint8_t buf[6];
+
+    if (!i2cRead(MPU_I2C_INSTANCE, MMA8452_ADDRESS, MMA8452_OUT_X_MSB, 6, buf)) {
+        return false;
+    }
+
+    acc->ADCRaw[0] = ((int16_t)((buf[0] << 8) | buf[1]) >> 2) / 4;
+    acc->ADCRaw[1] = ((int16_t)((buf[2] << 8) | buf[3]) >> 2) / 4;
+    acc->ADCRaw[2] = ((int16_t)((buf[4] << 8) | buf[5]) >> 2) / 4;
+
+    return true;
+}
+
+bool mma8452Detect(accDev_t *acc)
+{
+    uint8_t sig = 0;
+    bool ack = i2cRead(MPU_I2C_INSTANCE, MMA8452_ADDRESS, MMA8452_WHO_AM_I, 1, &sig);
+
     if (!ack || (sig != MMA8452_DEVICE_SIGNATURE && sig != MMA8451_DEVICE_SIGNATURE))
         return false;
 
     acc->init = mma8452Init;
     acc->read = mma8452Read;
     device_id = sig;
-    return true;
-}
-
-static inline void mma8451ConfigureInterrupt(void)
-{
-#ifdef NAZE
-    // PA5 - ACC_INT2 output on NAZE rev3/4 hardware
-    // NAZE rev.5 hardware has PA5 (ADC1_IN5) on breakout pad on bottom of board
-
-    gpio_config_t gpio;
-
-    RCC_APB2PeriphClockCmd(RCC_APB2Periph_GPIOA, ENABLE);
-
-    gpio.pin = Pin_5;
-    gpio.speed = Speed_2MHz;
-    gpio.mode = Mode_IN_FLOATING;
-    gpioInit(GPIOA, &gpio);
-#endif
-
-    i2cWrite(MMA8452_ADDRESS, MMA8452_CTRL_REG3, MMA8452_CTRL_REG3_IPOL); // Interrupt polarity (active HIGH)
-    i2cWrite(MMA8452_ADDRESS, MMA8452_CTRL_REG4, MMA8452_CTRL_REG4_INT_EN_DRDY); // Enable DRDY interrupt (unused by this driver)
-    i2cWrite(MMA8452_ADDRESS, MMA8452_CTRL_REG5, 0); // DRDY routed to INT2
-}
-
-static void mma8452Init(acc_t *acc)
-{
-
-    i2cWrite(MMA8452_ADDRESS, MMA8452_CTRL_REG1, 0); // Put device in standby to configure stuff
-    i2cWrite(MMA8452_ADDRESS, MMA8452_XYZ_DATA_CFG, MMA8452_FS_RANGE_8G);
-    i2cWrite(MMA8452_ADDRESS, MMA8452_HP_FILTER_CUTOFF, MMA8452_HPF_CUTOFF_LV4);
-    i2cWrite(MMA8452_ADDRESS, MMA8452_CTRL_REG2, MMA8452_CTRL_REG2_MODS_HR | MMA8452_CTRL_REG2_MODS_HR << 3); // High resolution measurement in both sleep and active modes
-
-    mma8451ConfigureInterrupt();
-
-    i2cWrite(MMA8452_ADDRESS, MMA8452_CTRL_REG1, MMA8452_CTRL_REG1_LNOISE | MMA8452_CTRL_REG1_ACTIVE); // Turn on measurements, low noise at max scale mode, Data Rate 800Hz. LNoise mode makes range +-4G.
-
-    acc->acc_1G = 256;
-}
-
-static bool mma8452Read(int16_t *accelData)
-{
-    uint8_t buf[6];
-
-    if (!i2cRead(MMA8452_ADDRESS, MMA8452_OUT_X_MSB, 6, buf)) {
-        return false;
-    }
-
-    accelData[0] = ((int16_t)((buf[0] << 8) | buf[1]) >> 2) / 4;
-    accelData[1] = ((int16_t)((buf[2] << 8) | buf[3]) >> 2) / 4;
-    accelData[2] = ((int16_t)((buf[4] << 8) | buf[5]) >> 2) / 4;
-
     return true;
 }

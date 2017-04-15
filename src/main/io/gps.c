@@ -22,48 +22,39 @@
 #include <string.h>
 #include <math.h>
 
-#include <platform.h>
-#include "build/build_config.h"
-#include "build/debug.h"
-
-#include "common/maths.h"
-#include "common/axis.h"
-#include "common/utils.h"
-
-#include "config/parameter_group.h"
-#include "config/parameter_group_ids.h"
-#include "config/feature.h"
-
-#include "drivers/dma.h"
-#include "drivers/system.h"
-#include "drivers/serial.h"
-#include "drivers/serial_uart.h"
-#include "drivers/gpio.h"
-#include "drivers/light_led.h"
-
-#include "sensors/sensors.h"
-
-#include "fc/config.h"
-#include "fc/runtime_config.h"
-#include "fc/fc_serial.h"
-
-#include "io/serial.h"
-#include "io/display.h"
-#include "io/gps.h"
-
-#include "flight/gps_conversion.h"
-#include "flight/pid.h"
-#include "flight/navigation.h"
-
+#include "platform.h"
 
 #ifdef GPS
 
-PG_REGISTER_WITH_RESET_FN(gpsConfig_t, gpsConfig, PG_GPS_CONFIG, 0);
+#include "build/build_config.h"
+#include "build/debug.h"
 
-void pgResetFn_gpsConfig(gpsConfig_t *instance)
-{
-    instance->autoConfig = GPS_AUTOCONFIG_ON;
-}
+#include "common/axis.h"
+#include "common/gps_conversion.h"
+#include "common/maths.h"
+#include "common/utils.h"
+
+#include "config/feature.h"
+#include "config/parameter_group.h"
+#include "config/parameter_group_ids.h"
+
+#include "drivers/system.h"
+#include "drivers/light_led.h"
+
+#include "drivers/light_led.h"
+#include "drivers/system.h"
+
+#include "io/dashboard.h"
+#include "io/gps.h"
+#include "io/serial.h"
+
+#include "fc/config.h"
+#include "fc/runtime_config.h"
+
+#include "flight/navigation.h"
+#include "flight/pid.h"
+
+#include "sensors/sensors.h"
 
 #define LOG_ERROR        '?'
 #define LOG_IGNORED      '!'
@@ -101,14 +92,11 @@ uint8_t GPS_svinfo_svid[GPS_SV_MAXSATS];    // Satellite ID
 uint8_t GPS_svinfo_quality[GPS_SV_MAXSATS]; // Bitfield Qualtity
 uint8_t GPS_svinfo_cno[GPS_SV_MAXSATS];     // Carrier to Noise Ratio (Signal Strength)
 
-uint32_t GPS_garbageByteCount = 0;
-
 // GPS timeout for wrong baud rate/disconnection/etc in milliseconds (default 2.5second)
 #define GPS_TIMEOUT (2500)
 // How many entries in gpsInitData array below
 #define GPS_INIT_ENTRIES (GPS_BAUDRATE_MAX + 1)
 #define GPS_BAUDRATE_CHANGE_DELAY (200)
-#define GPS_BOOT_DELAY          (2500)
 
 static serialPort_t *gpsPort;
 
@@ -189,11 +177,20 @@ typedef enum {
     GPS_CHANGE_BAUD,
     GPS_CONFIGURE,
     GPS_RECEIVING_DATA,
-    GPS_LOST_COMMUNICATION,
+    GPS_LOST_COMMUNICATION
 } gpsState_e;
 
 gpsData_t gpsData;
 
+
+PG_REGISTER_WITH_RESET_TEMPLATE(gpsConfig_t, gpsConfig, PG_GPS_CONFIG, 0);
+
+PG_RESET_TEMPLATE(gpsConfig_t, gpsConfig,
+    .provider = GPS_NMEA,
+    .sbasMode = SBAS_AUTO,
+    .autoConfig = GPS_AUTOCONFIG_ON,
+    .autoBaud = GPS_AUTOBAUD_OFF
+);
 
 static void shiftPacketLog(void)
 {
@@ -235,7 +232,7 @@ void gpsInit(void)
         return;
     }
 
-    while (gpsInitData[gpsData.baudrateIndex].baudrateIndex != gpsPortConfig->baudRates[BAUDRATE_GPS]) {
+    while (gpsInitData[gpsData.baudrateIndex].baudrateIndex != gpsPortConfig->gps_baudrateIndex) {
         gpsData.baudrateIndex++;
         if (gpsData.baudrateIndex >= GPS_INIT_DATA_ENTRY_COUNT) {
             gpsData.baudrateIndex = DEFAULT_BAUD_RATE_INDEX;
@@ -245,10 +242,12 @@ void gpsInit(void)
 
     portMode_t mode = MODE_RXTX;
     // only RX is needed for NMEA-style GPS
+#if !defined(COLIBRI_RACE) || !defined(LUX_RACE)
     if (gpsConfig()->provider == GPS_NMEA)
-	    mode &= ~MODE_TX;
+        mode &= ~MODE_TX;
+#endif
 
-    // no callback - buffer will be consumed in gpsThread()
+    // no callback - buffer will be consumed in gpsUpdate()
     gpsPort = openSerialPort(gpsPortConfig->identifier, FUNCTION_GPS, NULL, gpsInitData[gpsData.baudrateIndex].baudrateIndex, mode, SERIAL_NOT_INVERTED);
     if (!gpsPort) {
         featureClear(FEATURE_GPS);
@@ -261,11 +260,49 @@ void gpsInit(void)
 
 void gpsInitNmea(void)
 {
+#if defined(COLIBRI_RACE) || defined(LUX_RACE)
+    uint32_t now;
+#endif
     switch(gpsData.state) {
         case GPS_INITIALIZING:
+#if defined(COLIBRI_RACE) || defined(LUX_RACE)
+           now = millis();
+           if (now - gpsData.state_ts < 1000)
+               return;
+           gpsData.state_ts = now;
+           if (gpsData.state_position < 1) {
+               serialSetBaudRate(gpsPort, 4800);
+               gpsData.state_position++;
+           } else if (gpsData.state_position < 2) {
+               // print our FIXED init string for the baudrate we want to be at
+               serialPrint(gpsPort, "$PSRF100,1,115200,8,1,0*05\r\n");
+               gpsData.state_position++;
+           } else {
+               // we're now (hopefully) at the correct rate, next state will switch to it
+               gpsSetState(GPS_CHANGE_BAUD);
+           }
+           break;
+#endif
         case GPS_CHANGE_BAUD:
+#if defined(COLIBRI_RACE) || defined(LUX_RACE)
+           now = millis();
+           if (now - gpsData.state_ts < 1000)
+               return;
+           gpsData.state_ts = now;
+           if (gpsData.state_position < 1) {
+               serialSetBaudRate(gpsPort, baudRates[gpsInitData[gpsData.baudrateIndex].baudrateIndex]);
+               gpsData.state_position++;
+           } else if (gpsData.state_position < 2) {
+               serialPrint(gpsPort, "$PSRF103,00,6,00,0*23\r\n");
+               gpsData.state_position++;
+           } else {
+#else
             serialSetBaudRate(gpsPort, baudRates[gpsInitData[gpsData.baudrateIndex].baudrateIndex]);
+#endif
             gpsSetState(GPS_RECEIVING_DATA);
+#if defined(COLIBRI_RACE) || defined(LUX_RACE)
+           }
+#endif
             break;
     }
 }
@@ -364,14 +401,17 @@ void gpsInitHardware(void)
     }
 }
 
-void gpsThread(void)
+static void updateGpsIndicator(timeUs_t currentTimeUs)
 {
-    // Extra delay for at least 2 seconds after booting to give GPS time to initialise
-    if (!isMPUSoftReset() && (millis() < GPS_BOOT_DELAY)) {
-        sensorsClear(SENSOR_GPS);
-        DISABLE_STATE(GPS_FIX);
-        return;
+    static uint32_t GPSLEDTime;
+    if ((int32_t)(currentTimeUs - GPSLEDTime) >= 0 && (GPS_numSat >= 5)) {
+        GPSLEDTime = currentTimeUs + 150000;
+        LED1_TOGGLE;
     }
+}
+
+void gpsUpdate(timeUs_t currentTimeUs)
+{
     // read out available GPS bytes
     if (gpsPort) {
         while (serialRxBytesWaiting(gpsPort))
@@ -410,6 +450,9 @@ void gpsThread(void)
                 gpsSetState(GPS_LOST_COMMUNICATION);
             }
             break;
+    }
+    if (sensors(SENSOR_GPS)) {
+        updateGpsIndicator(currentTimeUs);
     }
 }
 
@@ -856,8 +899,7 @@ static bool _new_speed;
 
 // from the UBlox6 document, the largest payout we receive i the NAV-SVINFO and the payload size
 // is calculated as 8 + 12*numCh.  numCh in the case of a Glonass receiver is 28.
-#define MAX_UBLOX_PAYLOAD_SIZE 344
-#define UBLOX_BUFFER_SIZE MAX_UBLOX_PAYLOAD_SIZE
+#define UBLOX_PAYLOAD_SIZE 344
 
 
 // Receive buffer
@@ -867,7 +909,7 @@ static union {
     ubx_nav_solution solution;
     ubx_nav_velned velned;
     ubx_nav_svinfo svinfo;
-    uint8_t bytes[UBLOX_BUFFER_SIZE];
+    uint8_t bytes[UBLOX_PAYLOAD_SIZE];
 } _buffer;
 
 void _update_checksum(uint8_t *data, uint8_t len, uint8_t *ck_a, uint8_t *ck_b)
@@ -956,8 +998,6 @@ static bool gpsNewFrameUBLOX(uint8_t data)
             if (PREAMBLE1 == data) {
                 _skip_packet = false;
                 _step++;
-            } else {
-                GPS_garbageByteCount++;
             }
             break;
         case 1: // Sync char 2 (0x62)
@@ -985,38 +1025,23 @@ static bool gpsNewFrameUBLOX(uint8_t data)
         case 5: // Payload length (part 2)
             _step++;
             _ck_b += (_ck_a += data);       // checksum byte
-            _payload_length |= (uint16_t)(data << 8);
-
-            if (_payload_length > MAX_UBLOX_PAYLOAD_SIZE ) {
-                // we can't receive the whole packet, just log the error and start searching for the next packet.
-                shiftPacketLog();
-                *gpsPacketLogChar = LOG_SKIPPED;
-                gpsData.errors++;
-                _step = 0;
-                break;
-            }
-
-            if (_payload_length > UBLOX_BUFFER_SIZE) {
+            _payload_length += (uint16_t)(data << 8);
+            if (_payload_length > UBLOX_PAYLOAD_SIZE) {
                 _skip_packet = true;
             }
-
-            // prepare to receive payload
-            _payload_counter = 0;
-
+            _payload_counter = 0;   // prepare to receive payload
             if (_payload_length == 0) {
                 _step = 7;
             }
             break;
         case 6:
             _ck_b += (_ck_a += data);       // checksum byte
-            if (_payload_counter < UBLOX_BUFFER_SIZE) {
+            if (_payload_counter < UBLOX_PAYLOAD_SIZE) {
                 _buffer.bytes[_payload_counter] = data;
             }
-            // NOTE: check counter BEFORE increasing so that a payload_size of 65535 is correctly handled.  This can happen if garbage data is received.
-            if (_payload_counter ==  _payload_length - 1) {
+            if (++_payload_counter >= _payload_length) {
                 _step++;
             }
-            _payload_counter++;
             break;
         case 7:
             _step++;
@@ -1051,14 +1076,15 @@ static bool gpsNewFrameUBLOX(uint8_t data)
 }
 
 static void gpsHandlePassthrough(uint8_t data)
-{
-    gpsNewData(data);
-#ifdef DISPLAY
-    if (feature(FEATURE_DISPLAY)) {
-        updateDisplay();
-    }
-#endif
-}
+ {
+     gpsNewData(data);
+ #ifdef USE_DASHBOARD
+     if (feature(FEATURE_DASHBOARD)) {
+         dashboardUpdate(micros());
+     }
+ #endif
+
+ }
 
 void gpsEnablePassthrough(serialPort_t *gpsPassthroughPort)
 {
@@ -1068,20 +1094,12 @@ void gpsEnablePassthrough(serialPort_t *gpsPassthroughPort)
     if(!(gpsPort->mode & MODE_TX))
         serialSetMode(gpsPort, gpsPort->mode | MODE_TX);
 
-#ifdef DISPLAY
-    if (feature(FEATURE_DISPLAY)) {
-        displayShowFixedPage(PAGE_GPS);
+#ifdef USE_DASHBOARD
+    if (feature(FEATURE_DASHBOARD)) {
+        dashboardShowFixedPage(PAGE_GPS);
     }
 #endif
-    serialPassthrough(gpsPort, gpsPassthroughPort, &gpsHandlePassthrough, NULL);
-}
 
-void updateGpsIndicator(uint32_t currentTime)
-{
-    static uint32_t GPSLEDTime;
-    if ((int32_t)(currentTime - GPSLEDTime) >= 0 && (GPS_numSat >= 5)) {
-        GPSLEDTime = currentTime + 150000;
-        LED1_TOGGLE;
-    }
+    serialPassthrough(gpsPort, gpsPassthroughPort, &gpsHandlePassthrough, NULL);
 }
 #endif

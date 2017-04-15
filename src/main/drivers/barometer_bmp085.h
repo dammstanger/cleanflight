@@ -17,18 +17,14 @@
 
 #pragma once
 
-typedef struct bmp085Config_s {
-    uint32_t gpioAPB2Peripherals;
-    uint16_t xclrGpioPin;
-    GPIO_TypeDef *xclrGpioPort;
-    uint16_t eocGpioPin;
-    GPIO_TypeDef *eocGpioPort;
+#include "io_types.h"
 
+typedef struct bmp085Config_s {
     ioTag_t xclrIO;
     ioTag_t eocIO;
 } bmp085Config_t;
 
-bool bmp085Detect(const bmp085Config_t *config, baro_t *baro);
+bool bmp085Detect(const bmp085Config_t *config, baroDev_t *baro);
 void bmp085Disable(const bmp085Config_t *config);
 
 #if defined(BARO_EOC_GPIO)

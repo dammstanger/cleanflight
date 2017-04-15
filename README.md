@@ -2,59 +2,33 @@
 
 ![Cleanflight](docs/assets/cleanflight/cleanflight-logo-light-wide-1-240px.jpg)
 
-Clean-code version of baseflight flight-controller - flight controllers are used to fly multi-rotor craft and fixed wing craft.
+Cleanflight is flight controller software for multi-rotor and fixed wings.  The cleanflight project, and related projects such as betaflight and iNav are
+used on the majority of flight controllers used around the world.  There is no other software used on as many flight-controllers!
 
-This fork differs from baseflight in that it attempts to use modern software development practices which result in:
+* If you're looking for cutting edge performance and don't mind doing your homework, checkout the [betaflight fork](https://github.com/betaflight/betaflight).
+* If you're looking for advanced navigation features then check out the [iNav fork](https://github.com/iNavFlight/inav).
+* All other users should use cleanflight.
 
-1. Greater reliability through code robustness and automated testing. 
-2. Easier maintenance through code cleanliness.
-3. Easier to develop new features. 
-4. Easier to re-use code through code de-coupling and modularisation.
+Features:
 
-The MultiWii software, from which baseflight originated, violates many good software development best-practices. Hopefully this fork will go some way to address them. If you see any bad code in this fork please immediately raise an issue so it can be fixed, or better yet submit a pull request.
+* Support for modern STM32 based processors F1/F3/F4/F7.
+* Support for modern accelerometer/gyro/barometer/compass sensors.
+* Support for modern ESC technologies DSHOT/ONESHOT and legacy PWM.
+* Support for Multi-color RGB LED strip support.
+* Advanced on-board telemetry logging (Blackbox).
+* Wide support of receivers (SBus/iBus/SumD/SumH/PPM/PWM)
+* Wide support of telemetry protocols (FrSky/SmartPort/S.Port/HoTT/iBus/LTM).
+* Built-in OSD support & configuration without needing third-party OSD software/firmware/comm devices.
+* VTX support (RTC6705/Unify Pro/IRC Tramp/etc).
+* and MUCH, MUCH more.
 
-## Additional Features
+## Installation & Documentation
 
-Cleanflight also has additional features not found in baseflight.
+See: https://github.com/betaflight/betaflight/wiki 
 
-* Multi-color RGB LED strip support (each LED can be a different color using variable length WS2811 addressable RGB strips - use for orientation indicators, low battery warning, flight mode status, etc.).
-* Oneshot ESC support.
-* Blackbox flight recorder logging (to onboard flash or external SD card).
-* Support for additional targets that use the STM32F3 processors (baseflight only supports STM32F1).
-* Support for the Seriously Pro Racing F3 board (STM32F303, I2C sensors, large flash, excellent I/O.).
-* Support for the TauLabs Sparky board (STM32F303, I2C sensors, based board with acc/gyro/compass and baro, ~$35).
-* Support for the OpenPilot CC3D board (STM32F103, board, SPI acc/gyro, ~$20).
-* Support for the CJMCU nano quadcopter board.
-* Support for developer breakout boards: (Port103R, STM32F3Discovery).
-* Support for more than 8 RC channels - (e.g. 16 Channels via FrSky X4RSB SBus).
-* Support for N-Position switches via flexible channel ranges - not just 3 like baseflight or 3/6 in MultiWii.
-* Lux's new PID (uses float values internally, resistant to looptime variation).
-* Simultaneous Bluetooth configuration and OSD.
-* Better PWM and PPM input and failsafe detection than baseflight.
-* Better FrSky Telemetry than baseflight.
-* LTM Telemetry.
-* Smartport Telemetry.
-* RSSI via ADC - Uses ADC to read PWM RSSI signals, tested with FrSky D4R-II and X8R.
-* OLED Displays - Display information on: Battery voltage, profile, rate profile, version, sensors, RC, etc.
-* In-flight manual PID tuning and rate adjustment.
-* Rate profiles and in-flight selection of them.
-* Graupner PPM failsafe.
-* Graupner HoTT telemetry.
-* Multiple simultaneous telemetry providers.
-* Configurable serial ports for Serial RX, Telemetry, MSP, GPS - Use most devices on any port, softserial too.
-* And many more minor bug fixes.
+## Support
 
-For a list of features, changes and some discussion please [review the thread on MultiWii forums](http://www.multiwii.com/forum/viewtopic.php?f=23&t=5149) and consult the documentation.
-
-## Installation
-
-See: [Installation.md](docs/Installation.md)
-
-## Documentation
-
-See: [Cleanflight docs folder](https://github.com/cleanflight/cleanflight/tree/master/docs)
-
-If what you need is not covered, check the [Baseflight documentation](https://github.com/multiwii/baseflight/wiki). If you still can't find what you need then visit the #cleanflight channel on the Freenode IRC network (info below).
+* Github issue track is NOT for end-user support.
 
 ## IRC Support and Developers Channel
 
@@ -64,6 +38,11 @@ irc://irc.freenode.net/#cleanflight
 
 If you are using Windows and don't have an IRC client installed, take a look at [HydraIRC](http://hydrairc.com/).
 
+There's a dedicated Slack chat channel for betaflight here:
+
+http://www.betaflight.tk/
+
+Etiquette: Don't ask to ask and please wait around long enough for a reply - sometimes people are out flying, asleep or at work and can't answer immediately.
 
 ## Videos
 
@@ -87,19 +66,9 @@ https://github.com/cleanflight/cleanflight-configurator
 Contributions are welcome and encouraged.  You can contribute in many ways:
 
 * Documentation updates and corrections.
-* How-To guides - Received help? Help others!
-* Bug fixes.
-* New features.
-* Telling us your ideas and suggestions.
-
-The best place to start is the IRC channel on freenode (see above), drop in, say hi.
-Next place is the github issue tracker:
-
-https://github.com/cleanflight/cleanflight/issues
-
-https://github.com/cleanflight/cleanflight-configurator/issues
-
-Before creating new issues please check to see if there is an existing one, search first otherwise you waste peoples time when they could be coding instead!
+* How-To guides - received help? Help others!
+* Bug reporting & fixes.
+* New feature ideas & suggestions.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md)
 
@@ -109,7 +78,56 @@ Please refer to the development section in the [docs/development](https://github
 
 TravisCI is used to run automatic builds: https://travis-ci.org/cleanflight/cleanflight
 
+https://travis-ci.org/cleanflight/cleanflight
+
 [![Build Status](https://travis-ci.org/cleanflight/cleanflight.svg?branch=master)](https://travis-ci.org/cleanflight/cleanflight)
 
 ## Cleanflight Releases
 https://github.com/cleanflight/cleanflight/releases
+
+## Open Source
+
+Cleanflight is software that is **open source** and is available free of charge without warranty to all users.
+
+The license is GPL3.
+
+## Project/Fork History
+
+Cleanflight is forked from Baseflight, which is now dead, all primary development happens in Cleanflight, betaflight and iNav forks.
+
+Cleanflight v2.x -> betaflight -> cleanflight v1.x -> baseflight -> multiwii
+
+## Contributors
+
+Thanks goes to all those whom have contributed to Cleanflight and its origins.
+
+Primary developers:
+* Dominic Clifton (hydra) - *cleanflight founder*
+* Boris B (borisbstyle) - *betaflight founder*
+* digitalentity - *inav founder*
+* Martin Budden (martinbudden)
+* Jason Blackman (blckmn)
+
+Big thanks to current and past contributors:
+* **Alexinparis** (for MultiWii),
+* **timecop** (for Baseflight),
+* **Sambas** (for the original STM32F4 port).
+* Bardwell, Joshua (joshuabardwell)
+* ctzsnooze
+* Höglund, Anders (andershoglund) 
+* Ledvin, Peter (ledvinap) - **IO code awesomeness!**
+* kc10kevin
+* Keeble, Gary (MadmanK)
+* Keller, Michael (mikeller) - **Configurator brilliance**
+* Kravcov, Albert (skaman82) - **Configurator brilliance**
+* MJ666
+* Nathan (nathantsoi)
+* ravnav
+* sambas - **bringing us the F4**
+* savaga
+* Stålheim, Anton (KiteAnton)
+* prodrone - **failsafe work**
+* **ctn** - **for the original Configurator**
+
+And many many others who haven't been mentioned....
+

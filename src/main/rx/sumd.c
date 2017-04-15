@@ -19,18 +19,19 @@
 #include <stdint.h>
 #include <stdlib.h>
 
-#include <platform.h>
+#include "platform.h"
 
-#include "build/build_config.h"
+#ifdef SERIAL_RX
 
-#include "config/parameter_group.h"
+#include "common/utils.h"
 
-#include "drivers/dma.h"
 #include "drivers/system.h"
 
-#include "drivers/serial.h"
-#include "drivers/serial_uart.h"
 #include "io/serial.h"
+
+#ifdef TELEMETRY
+#include "telemetry/telemetry.h"
+#endif
 
 #include "rx/rx.h"
 #include "rx/sumd.h"
@@ -48,30 +49,6 @@
 static bool sumdFrameDone = false;
 static uint16_t sumdChannels[SUMD_MAX_CHANNEL];
 static uint16_t crc;
-
-static void sumdDataReceive(uint16_t c);
-static uint16_t sumdReadRawRC(const rxRuntimeConfig_t *rxRuntimeConfig, uint8_t chan);
-uint8_t sumdFrameStatus(void);
-
-bool sumdInit(const rxConfig_t *rxConfig, rxRuntimeConfig_t *rxRuntimeConfig)
-{
-    UNUSED(rxConfig);
-
-    rxRuntimeConfig->channelCount = SUMD_MAX_CHANNEL;
-    rxRuntimeConfig->rxRefreshRate = 11000;
-
-    rxRuntimeConfig->rcReadRawFn = sumdReadRawRC;
-    rxRuntimeConfig->rcFrameStatusFn = sumdFrameStatus;
-
-    serialPortConfig_t *portConfig = findSerialPortConfig(FUNCTION_RX_SERIAL);
-    if (!portConfig) {
-        return false;
-    }
-
-    serialPort_t *sumdPort = openSerialPort(portConfig->identifier, FUNCTION_RX_SERIAL, sumdDataReceive, SUMD_BAUDRATE, MODE_RX, SERIAL_NOT_INVERTED);
-
-    return sumdPort != NULL;
-}
 
 #define CRC_POLYNOME 0x1021
 
@@ -135,7 +112,7 @@ static void sumdDataReceive(uint16_t c)
 #define SUMD_FRAME_STATE_OK 0x01
 #define SUMD_FRAME_STATE_FAILSAFE 0x81
 
-uint8_t sumdFrameStatus(void)
+static uint8_t sumdFrameStatus(void)
 {
     uint8_t channelIndex;
 
@@ -180,3 +157,42 @@ static uint16_t sumdReadRawRC(const rxRuntimeConfig_t *rxRuntimeConfig, uint8_t 
     UNUSED(rxRuntimeConfig);
     return sumdChannels[chan] / 8;
 }
+
+bool sumdInit(const rxConfig_t *rxConfig, rxRuntimeConfig_t *rxRuntimeConfig)
+{
+    UNUSED(rxConfig);
+
+    rxRuntimeConfig->channelCount = SUMD_MAX_CHANNEL;
+    rxRuntimeConfig->rxRefreshRate = 11000;
+
+    rxRuntimeConfig->rcReadRawFn = sumdReadRawRC;
+    rxRuntimeConfig->rcFrameStatusFn = sumdFrameStatus;
+
+    const serialPortConfig_t *portConfig = findSerialPortConfig(FUNCTION_RX_SERIAL);
+    if (!portConfig) {
+        return false;
+    }
+
+#ifdef TELEMETRY
+    bool portShared = telemetryCheckRxPortShared(portConfig);
+#else
+    bool portShared = false;
+#endif
+
+    serialPort_t *sumdPort = openSerialPort(portConfig->identifier, 
+        FUNCTION_RX_SERIAL, 
+        sumdDataReceive, 
+        SUMD_BAUDRATE, 
+        portShared ? MODE_RXTX : MODE_RX, 
+        SERIAL_NOT_INVERTED | (rxConfig->halfDuplex ? SERIAL_BIDIR : 0)
+        );
+
+#ifdef TELEMETRY
+    if (portShared) {
+        telemetrySharedPort = sumdPort;
+    }
+#endif
+
+    return sumdPort != NULL;
+}
+#endif

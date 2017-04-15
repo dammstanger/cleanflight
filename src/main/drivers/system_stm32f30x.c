@@ -17,14 +17,15 @@
 
 #include <stdbool.h>
 #include <stdint.h>
-#include <stdlib.h>
 
 #include <platform.h>
 
 #include "gpio.h"
+#include "nvic.h"
 #include "system.h"
 
 #define AIRCR_VECTKEY_MASK    ((uint32_t)0x05FA0000)
+void SetSysClock();
 
 void systemReset(void)
 {
@@ -76,4 +77,45 @@ bool isMPUSoftReset(void)
         return true;
     else
         return false;
+}
+
+void systemInit(void)
+{
+    checkForBootLoaderRequest();
+
+    // Enable FPU
+    SCB->CPACR = (0x3 << (10 * 2)) | (0x3 << (11 * 2));
+    SetSysClock();
+
+    // Configure NVIC preempt/priority groups
+    NVIC_PriorityGroupConfig(NVIC_PRIORITY_GROUPING);
+
+    // cache RCC->CSR value to use it in isMPUSoftreset() and others
+    cachedRccCsrValue = RCC->CSR;
+    RCC_ClearFlag();
+
+    enableGPIOPowerUsageAndNoiseReductions();
+
+    // Init cycle counter
+    cycleCounterInit();
+
+    // SysTick
+    SysTick_Config(SystemCoreClock / 1000);
+}
+
+void checkForBootLoaderRequest(void)
+{
+    void(*bootJump)(void);
+
+    if (*((uint32_t *)0x20009FFC) == 0xDEADBEEF) {
+
+        *((uint32_t *)0x20009FFC) = 0x0;
+
+        __enable_irq();
+        __set_MSP(*((uint32_t *)0x1FFFD800));
+
+        bootJump = (void(*)(void))(*((uint32_t *) 0x1FFFD804));
+        bootJump();
+        while (1);
+    }
 }

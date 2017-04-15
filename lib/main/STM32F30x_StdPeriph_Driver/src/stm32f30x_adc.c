@@ -951,6 +951,8 @@ void ADC_AnalogWatchdog3SingleChannelConfig(ADC_TypeDef* ADCx, uint8_t ADC_Chann
 #endif
 void ADC_TempSensorCmd(ADC_TypeDef* ADCx, FunctionalState NewState)
 {
+    (void)(ADCx);
+    
   /* Check the parameters */
   assert_param(IS_FUNCTIONAL_STATE(NewState));
 
@@ -1023,6 +1025,7 @@ void ADC_VrefintCmd(ADC_TypeDef* ADCx, FunctionalState NewState)
 #endif
 void ADC_VbatCmd(ADC_TypeDef* ADCx, FunctionalState NewState)
 {
+    (void)ADCx;
   /* Check the parameters */
   assert_param(IS_FUNCTIONAL_STATE(NewState));
 

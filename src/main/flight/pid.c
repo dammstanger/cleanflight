@@ -23,218 +23,345 @@
 #include <platform.h>
 
 #include "build/build_config.h"
+#include "build/debug.h"
 
 #include "common/axis.h"
 #include "common/maths.h"
 #include "common/filter.h"
 
+#include "config/config_reset.h"
 #include "config/parameter_group.h"
 #include "config/parameter_group_ids.h"
-#include "config/config_reset.h"
-#include "config/profile.h"
 
-#include "drivers/sensor.h"
-#include "drivers/accgyro.h"
-#include "drivers/gyro_sync.h"
-
-#include "sensors/sensors.h"
-#include "sensors/acceleration.h"
-
-#include "rx/rx.h"
+#include "fc/fc_core.h"
+#include "fc/fc_rc.h"
 
 #include "fc/rc_controls.h"
-#include "fc/rate_profile.h"
+#include "fc/runtime_config.h"
 
 #include "flight/pid.h"
 #include "flight/imu.h"
+#include "flight/mixer.h"
+#include "flight/navigation.h"
 
-uint32_t targetPidLooptime = 0;
+#include "sensors/gyro.h"
+#include "sensors/acceleration.h"
 
-int16_t axisPID[3];
+uint32_t targetPidLooptime;
+static bool pidStabilisationEnabled;
 
-#ifdef BLACKBOX
-int32_t axisPID_P[3], axisPID_I[3], axisPID_D[3];
-#endif
-
-// PIDweight is a scale factor for PIDs which is derived from the throttle and TPA setting, and 100 = 100% scale means no PID reduction
-uint8_t PIDweight[3];
-
-int32_t lastITerm[3], ITermLimit[3];
-float lastITermf[3], ITermLimitf[3];
-
-pt1Filter_t deltaFilter[3];
-pt1Filter_t yawFilter;
-biquadFilter_t dtermFilterLpf[3];
-biquadFilter_t dtermFilterNotch[3];
-
-
-PG_REGISTER_PROFILE_WITH_RESET_TEMPLATE(pidProfile_t, pidProfile, PG_PID_PROFILE, 0);
-
-PG_RESET_TEMPLATE(pidProfile_t, pidProfile,
-    .pidController = 0,
-    .P8[PIDROLL] = 40,
-    .I8[PIDROLL] = 30,
-    .D8[PIDROLL] = 23,
-    .P8[PIDPITCH] = 40,
-    .I8[PIDPITCH] = 30,
-    .D8[PIDPITCH] = 23,
-    .P8[PIDYAW] = 85,
-    .I8[PIDYAW] = 45,
-    .D8[PIDYAW] = 0,
-    .P8[PIDALT] = 50,
-    .I8[PIDALT] = 0,
-    .D8[PIDALT] = 0,
-    .P8[PIDPOS] = 15,   // POSHOLD_P * 100
-    .I8[PIDPOS] = 0,    // POSHOLD_I * 100
-    .D8[PIDPOS] = 0,
-    .P8[PIDPOSR] = 34,  // POSHOLD_RATE_P * 10
-    .I8[PIDPOSR] = 14,  // POSHOLD_RATE_I * 100
-    .D8[PIDPOSR] = 53,  // POSHOLD_RATE_D * 1000
-    .P8[PIDNAVR] = 25,  // NAV_P * 10
-    .I8[PIDNAVR] = 33,  // NAV_I * 100
-    .D8[PIDNAVR] = 83,  // NAV_D * 1000
-    .P8[PIDLEVEL] = 20,
-    .I8[PIDLEVEL] = 10,
-    .D8[PIDLEVEL] = 75,
-    .P8[PIDMAG] = 40,
-    .P8[PIDVEL] = 120,
-    .I8[PIDVEL] = 45,
-    .D8[PIDVEL] = 1,
-
-    .yaw_p_limit = YAW_P_LIMIT_MAX,
-    .yaw_lpf_hz = 0,
-    .dterm_filter_type = FILTER_BIQUAD,
-    .dterm_lpf_hz = 100,    // filtering ON by default
-    .dterm_notch_hz = 260,
-    .dterm_notch_cutoff = 160,
-    .deltaMethod = PID_DELTA_FROM_MEASUREMENT,
-    .horizon_tilt_effect = 75,
-    .horizon_tilt_mode = HORIZON_TILT_MODE_SAFE,
-);
-
+float axisPID_P[3], axisPID_I[3], axisPID_D[3];
 
 static float dT;
 
-#ifdef UNIT_TEST
-STATIC_UNIT_TESTED void pidResetDt(void)
-{
-    dT = 0.0f;
-}
-#endif
-float getdT(void)
-{
-    if (!dT) dT = (float)targetPidLooptime * 0.000001f;
+PG_REGISTER_WITH_RESET_TEMPLATE(pidConfig_t, pidConfig, PG_PID_CONFIG, 0);
 
-    return dT;
+#ifdef STM32F10X
+#define PID_PROCESS_DENOM_DEFAULT       1
+#elif defined(USE_GYRO_SPI_MPU6000) || defined(USE_GYRO_SPI_MPU6500)  || defined(USE_GYRO_SPI_ICM20689)
+#define PID_PROCESS_DENOM_DEFAULT       4
+#else
+#define PID_PROCESS_DENOM_DEFAULT       2
+#endif
+PG_RESET_TEMPLATE(pidConfig_t, pidConfig,
+    .pid_process_denom = PID_PROCESS_DENOM_DEFAULT
+);
+
+PG_REGISTER_ARRAY_WITH_RESET_FN(pidProfile_t, MAX_PROFILE_COUNT, pidProfiles, PG_PID_PROFILE, 0);
+
+void resetPidProfile(pidProfile_t *pidProfile)
+{
+    RESET_CONFIG(const pidProfile_t, pidProfile,
+        .P8[ROLL] = 44,
+        .I8[ROLL] = 40,
+        .D8[ROLL] = 30,
+        .P8[PITCH] = 58,
+        .I8[PITCH] = 50,
+        .D8[PITCH] = 35,
+        .P8[YAW] = 70,
+        .I8[YAW] = 45,
+        .D8[YAW] = 20,
+        .P8[PIDALT] = 50,
+        .I8[PIDALT] = 0,
+        .D8[PIDALT] = 0,
+        .P8[PIDPOS] = 15,   // POSHOLD_P * 100,
+        .I8[PIDPOS] = 0,    // POSHOLD_I * 100,
+        .D8[PIDPOS] = 0,
+        .P8[PIDPOSR] = 34,  // POSHOLD_RATE_P * 10,
+        .I8[PIDPOSR] = 14,  // POSHOLD_RATE_I * 100,
+        .D8[PIDPOSR] = 53,  // POSHOLD_RATE_D * 1000,
+        .P8[PIDNAVR] = 25,  // NAV_P * 10,
+        .I8[PIDNAVR] = 33,  // NAV_I * 100,
+        .D8[PIDNAVR] = 83,  // NAV_D * 1000,
+        .P8[PIDLEVEL] = 50,
+        .I8[PIDLEVEL] = 50,
+        .D8[PIDLEVEL] = 100,
+        .P8[PIDMAG] = 40,
+        .P8[PIDVEL] = 55,
+        .I8[PIDVEL] = 55,
+        .D8[PIDVEL] = 75,
+
+        .pidSumLimit = PIDSUM_LIMIT,
+        .pidSumLimitYaw = PIDSUM_LIMIT_YAW,
+        .yaw_lpf_hz = 0,
+        .itermWindupPointPercent = 50,
+        .dterm_filter_type = FILTER_BIQUAD,
+        .dterm_lpf_hz = 100,    // filtering ON by default
+        .dterm_notch_hz = 260,
+        .dterm_notch_cutoff = 160,
+        .vbatPidCompensation = 0,
+        .pidAtMinThrottle = PID_STABILISATION_ON,
+        .levelAngleLimit = 55,
+        .levelSensitivity = 55,
+        .setpointRelaxRatio = 100,
+        .dtermSetpointWeight = 60,
+        .yawRateAccelLimit = 100,
+        .rateAccelLimit = 0,
+        .itermThrottleThreshold = 350,
+        .itermAcceleratorGain = 1000
+    );
+}
+
+void pgResetFn_pidProfiles(pidProfile_t *pidProfiles)
+{
+    for (int i = 0; i < MAX_PROFILE_COUNT; i++) {
+        resetPidProfile(&pidProfiles[i]);
+    }
 }
 
 void pidSetTargetLooptime(uint32_t pidLooptime)
 {
     targetPidLooptime = pidLooptime;
+    dT = (float)targetPidLooptime * 0.000001f;
 }
+
+void pidResetErrorGyroState(void)
+{
+    for (int axis = 0; axis < 3; axis++) {
+        axisPID_I[axis] = 0.0f;
+    }
+}
+
+static float itermAccelerator = 1.0f;
+
+void pidSetItermAccelerator(float newItermAccelerator) {
+    itermAccelerator = newItermAccelerator;
+}
+
+void pidStabilisationState(pidStabilisationState_e pidControllerState)
+{
+    pidStabilisationEnabled = (pidControllerState == PID_STABILISATION_ON) ? true : false;
+}
+
+const angle_index_t rcAliasToAngleIndexMap[] = { AI_ROLL, AI_PITCH };
+
+static filterApplyFnPtr dtermNotchFilterApplyFn;
+static void *dtermFilterNotch[2];
+static filterApplyFnPtr dtermLpfApplyFn;
+static void *dtermFilterLpf[2];
+static filterApplyFnPtr ptermYawFilterApplyFn;
+static void *ptermYawFilter;
 
 void pidInitFilters(const pidProfile_t *pidProfile)
 {
-    int axis;
+    static biquadFilter_t biquadFilterNotch[2];
+    static pt1Filter_t pt1Filter[2];
+    static biquadFilter_t biquadFilter[2];
+    static firFilterDenoise_t denoisingFilter[2];
+    static pt1Filter_t pt1FilterYaw;
 
-    if (!targetPidLooptime) {
-        // loop time needs to be set.  currently activateConfig calls this but the gyro has not been initialised yet
-        // this requires an additional call after pidSetTargetLooptime has been used.
-        return;
-    }
+    uint32_t pidFrequencyNyquist = (1.0f / dT) / 2; // No rounding needed
 
-    if (pidProfile->dterm_notch_hz) {
-        for (axis = 0; axis < 3; axis++) {
-            biquadFilterInitNotch(&dtermFilterNotch[axis], targetPidLooptime, pidProfile->dterm_notch_hz, pidProfile->dterm_notch_cutoff);
+    BUILD_BUG_ON(FD_YAW != 2); // only setting up Dterm filters on roll and pitch axes, so ensure yaw axis is 2
+
+    if (pidProfile->dterm_notch_hz == 0 || pidProfile->dterm_notch_hz > pidFrequencyNyquist) {
+        dtermNotchFilterApplyFn = nullFilterApply;
+    } else {
+        dtermNotchFilterApplyFn = (filterApplyFnPtr)biquadFilterApply;
+        const float notchQ = filterGetNotchQ(pidProfile->dterm_notch_hz, pidProfile->dterm_notch_cutoff);
+        for (int axis = FD_ROLL; axis <= FD_PITCH; axis++) {
+            dtermFilterNotch[axis] = &biquadFilterNotch[axis];
+            biquadFilterInit(dtermFilterNotch[axis], pidProfile->dterm_notch_hz, targetPidLooptime, notchQ, FILTER_NOTCH);
         }
     }
 
-    if (pidProfile->dterm_filter_type == FILTER_BIQUAD && pidProfile->dterm_lpf_hz) {
-        for (axis = 0; axis < 3; axis++) {
-            biquadFilterInitLPF(&dtermFilterLpf[axis], pidProfile->dterm_lpf_hz, targetPidLooptime);
-        }
-    }
-}
-
-void pidResetITerm(void)
-{
-    for (int axis = 0; axis < 3; axis++) {
-        lastITerm[axis] = 0;
-        lastITermf[axis] = 0.0f;
-    }
-}
-
-// calculates strength of horizon leveling; 0 = none, 100 = most leveling
-int calcHorizonLevelStrength(uint16_t rxConfigMidrc, int horizonTiltEffect,
-        uint8_t horizonTiltMode, int horizonSensitivity)
-{
-    // get raw stick positions (-500 to 500):
-    const int32_t stickPosAil = getRcStickDeflection(FD_ROLL, rxConfigMidrc);
-    const int32_t stickPosEle = getRcStickDeflection(FD_PITCH, rxConfigMidrc);
-
-    // 0 at center stick, 500 at max stick deflection:
-    const int32_t mostDeflectedPos = MAX(ABS(stickPosAil), ABS(stickPosEle));
-
-    // start with 100 at center stick, 0 at max stick deflection:
-    int horizonLevelStrength = (500 - mostDeflectedPos) / 5;
-
-    // 0 at level, 900 at vertical, 1800 at inverted (degrees * 10)
-    const int currentInclination = MAX(ABS(attitude.values.roll),
-                                                ABS(attitude.values.pitch));
-
-    // horizonTiltMode:  SAFE = leveling always active when sticks centered,
-    // EXPERT = leveling can be totally off when inverted
-    if (horizonTiltMode == HORIZON_TILT_MODE_EXPERT) {
-        if (horizonTiltEffect < 175) {
-            // horizonTiltEffect 0 to 125 => 2700 to 900
-            //  (represents where leveling goes to zero):
-            const int cutoffDeciDegrees = (175-horizonTiltEffect) * 18;
-            // inclinationLevelRatio (0 to 100) is smaller (less leveling)
-            //  for larger inclinations; 0 at cutoffDeciDegrees value:
-            const int inclinationLevelRatio = constrain(
-                              (((cutoffDeciDegrees-currentInclination)*10) /
-                                           (cutoffDeciDegrees/10)), 0, 100);
-            // apply configured horizon sensitivity:
-            if (horizonSensitivity <= 0) {       // zero means no leveling
-                horizonLevelStrength = 0;
-            } else {
-                // when stick is near center (horizonLevelStrength ~= 100)
-                //  H_sensitivity value has little effect,
-                // when stick is deflected (horizonLevelStrength near 0)
-                //  H_sensitivity value has more effect:
-                horizonLevelStrength = (horizonLevelStrength - 100) *
-                        100 / horizonSensitivity + 100;
+    if (pidProfile->dterm_lpf_hz == 0 || pidProfile->dterm_lpf_hz > pidFrequencyNyquist) {
+        dtermLpfApplyFn = nullFilterApply;
+    } else {
+        switch (pidProfile->dterm_filter_type) {
+        default:
+            dtermLpfApplyFn = nullFilterApply;
+            break;
+        case FILTER_PT1:
+            dtermLpfApplyFn = (filterApplyFnPtr)pt1FilterApply;
+            for (int axis = FD_ROLL; axis <= FD_PITCH; axis++) {
+                dtermFilterLpf[axis] = &pt1Filter[axis];
+                pt1FilterInit(dtermFilterLpf[axis], pidProfile->dterm_lpf_hz, dT);
             }
-            // apply inclination ratio, which may lower leveling
-            //  to zero regardless of stick position:
-            horizonLevelStrength = horizonLevelStrength * inclinationLevelRatio / 100;
-        }
-        else
-          horizonLevelStrength = 0;
-    } else {  // horizon_tilt_mode = SAFE (leveling always active when sticks centered)
-        int sensitFact;
-        if (horizonTiltEffect > 0) {
-            // ratio of 100 to 0 (larger means more leveling):
-            const int factorRatio = 100 - horizonTiltEffect;
-            // inclinationLevelRatio (0 to 100) is smaller (less leveling)
-            //  for larger inclinations, goes to 100 at inclination level:
-            int inclinationLevelRatio =
-                  ((1800-currentInclination)/18 * (100-factorRatio)) / 100 + factorRatio;
-            // apply ratio to configured horizon sensitivity:
-            sensitFact = horizonSensitivity * inclinationLevelRatio / 100;
-        }
-        else   // horizonTiltEffect=0 for "old" functionality
-            sensitFact = horizonSensitivity;
-
-        if (sensitFact <= 0) {           // zero means no leveling
-            horizonLevelStrength = 0;
-        } else {
-            // when stick is near center (horizonLevelStrength ~= 100)
-            //  sensitFact value has little effect,
-            // when stick is deflected (horizonLevelStrength near 0)
-            //  sensitFact value has more effect:
-            horizonLevelStrength =  (horizonLevelStrength - 100) * 100 / sensitFact + 100;
+            break;
+        case FILTER_BIQUAD:
+            dtermLpfApplyFn = (filterApplyFnPtr)biquadFilterApply;
+            for (int axis = FD_ROLL; axis <= FD_PITCH; axis++) {
+                dtermFilterLpf[axis] = &biquadFilter[axis];
+                biquadFilterInitLPF(dtermFilterLpf[axis], pidProfile->dterm_lpf_hz, targetPidLooptime);
+            }
+            break;
+        case FILTER_FIR:
+            dtermLpfApplyFn = (filterApplyFnPtr)firFilterDenoiseUpdate;
+            for (int axis = FD_ROLL; axis <= FD_PITCH; axis++) {
+                dtermFilterLpf[axis] = &denoisingFilter[axis];
+                firFilterDenoiseInit(dtermFilterLpf[axis], pidProfile->dterm_lpf_hz, targetPidLooptime);
+            }
+            break;
         }
     }
-    return constrain(horizonLevelStrength, 0, 100);
+
+    if (pidProfile->yaw_lpf_hz == 0 || pidProfile->yaw_lpf_hz > pidFrequencyNyquist) {
+        ptermYawFilterApplyFn = nullFilterApply;
+    } else {
+        ptermYawFilterApplyFn = (filterApplyFnPtr)pt1FilterApply;
+        ptermYawFilter = &pt1FilterYaw;
+        pt1FilterInit(ptermYawFilter, pidProfile->yaw_lpf_hz, dT);
+    }
+}
+
+static float Kp[3], Ki[3], Kd[3], maxVelocity[3];
+static float relaxFactor;
+static float dtermSetpointWeight;
+static float levelGain, horizonGain, horizonTransition, ITermWindupPoint, ITermWindupPointInv;
+
+void pidInitConfig(const pidProfile_t *pidProfile) {
+    for(int axis = FD_ROLL; axis <= FD_YAW; axis++) {
+        Kp[axis] = PTERM_SCALE * pidProfile->P8[axis];
+        Ki[axis] = ITERM_SCALE * pidProfile->I8[axis];
+        Kd[axis] = DTERM_SCALE * pidProfile->D8[axis];
+    }
+    dtermSetpointWeight = pidProfile->dtermSetpointWeight / 127.0f;
+    relaxFactor = 1.0f / (pidProfile->setpointRelaxRatio / 100.0f);
+    levelGain = pidProfile->P8[PIDLEVEL] / 10.0f;
+    horizonGain = pidProfile->I8[PIDLEVEL] / 10.0f;
+    horizonTransition = 100.0f / pidProfile->D8[PIDLEVEL];
+    maxVelocity[FD_ROLL] = maxVelocity[FD_PITCH] = pidProfile->rateAccelLimit * 100 * dT;
+    maxVelocity[FD_YAW] = pidProfile->yawRateAccelLimit * 100 * dT;
+    ITermWindupPoint = (float)pidProfile->itermWindupPointPercent / 100.0f;
+    ITermWindupPointInv = 1.0f / (1.0f - ITermWindupPoint);
+}
+
+void pidInit(const pidProfile_t *pidProfile)
+{
+    pidSetTargetLooptime(gyro.targetLooptime * pidConfig()->pid_process_denom); // Initialize pid looptime
+    pidInitFilters(pidProfile);
+    pidInitConfig(pidProfile);
+}
+
+static float calcHorizonLevelStrength(void) {
+    float horizonLevelStrength = 0.0f;
+    if (horizonTransition > 0.0f) {
+        const float mostDeflectedPos = MAX(getRcDeflectionAbs(FD_ROLL), getRcDeflectionAbs(FD_PITCH));
+        // Progressively turn off the horizon self level strength as the stick is banged over
+        horizonLevelStrength = constrainf(1 - mostDeflectedPos * horizonTransition, 0, 1);
+    }
+    return horizonLevelStrength;
+}
+
+static float pidLevel(int axis, const pidProfile_t *pidProfile, const rollAndPitchTrims_t *angleTrim, float currentPidSetpoint) {
+    // calculate error angle and limit the angle to the max inclination
+    float angle = pidProfile->levelSensitivity * getRcDeflection(axis);
+#ifdef GPS
+    angle += GPS_angle[axis];
+#endif
+    angle = constrainf(angle, -pidProfile->levelAngleLimit, pidProfile->levelAngleLimit);
+    const float errorAngle = angle - ((attitude.raw[axis] - angleTrim->raw[axis]) / 10.0f);
+    if (FLIGHT_MODE(ANGLE_MODE)) {
+        // ANGLE mode - control is angle based, so control loop is needed
+        currentPidSetpoint = errorAngle * levelGain;
+    } else {
+        // HORIZON mode - direct sticks control is applied to rate PID
+        // mix up angle error to desired AngleRate to add a little auto-level feel
+        const float horizonLevelStrength = calcHorizonLevelStrength();
+        currentPidSetpoint = currentPidSetpoint + (errorAngle * horizonGain * horizonLevelStrength);
+    }
+    return currentPidSetpoint;
+}
+
+static float accelerationLimit(int axis, float currentPidSetpoint) {
+    static float previousSetpoint[3];
+    const float currentVelocity = currentPidSetpoint- previousSetpoint[axis];
+
+    if(ABS(currentVelocity) > maxVelocity[axis])
+        currentPidSetpoint = (currentVelocity > 0) ? previousSetpoint[axis] + maxVelocity[axis] : previousSetpoint[axis] - maxVelocity[axis];
+
+    previousSetpoint[axis] = currentPidSetpoint;
+    return currentPidSetpoint;
+}
+
+// Betaflight pid controller, which will be maintained in the future with additional features specialised for current (mini) multirotor usage.
+// Based on 2DOF reference design (matlab)
+void pidController(const pidProfile_t *pidProfile, const rollAndPitchTrims_t *angleTrim)
+{
+    static float previousRateError[2];
+    const float tpaFactor = getThrottlePIDAttenuation();
+    const float motorMixRange = getMotorMixRange();
+
+    // Dynamic ki component to gradually scale back integration when above windup point
+    const float dynKi = MIN((1.0f - motorMixRange) * ITermWindupPointInv, 1.0f);
+
+    // ----------PID controller----------
+    for (int axis = FD_ROLL; axis <= FD_YAW; axis++) {
+        float currentPidSetpoint = getSetpointRate(axis);
+
+        if(maxVelocity[axis])
+            currentPidSetpoint = accelerationLimit(axis, currentPidSetpoint);
+
+        // Yaw control is GYRO based, direct sticks control is applied to rate PID
+        if ((FLIGHT_MODE(ANGLE_MODE) || FLIGHT_MODE(HORIZON_MODE)) && axis != YAW) {
+            currentPidSetpoint = pidLevel(axis, pidProfile, angleTrim, currentPidSetpoint);
+        }
+
+        const float gyroRate = gyro.gyroADCf[axis]; // Process variable from gyro output in deg/sec
+
+        // --------low-level gyro-based PID based on 2DOF PID controller. ----------
+        // 2-DOF PID controller with optional filter on derivative term.
+        // b = 1 and only c (dtermSetpointWeight) can be tuned (amount derivative on measurement or error).
+
+        // -----calculate error rate
+        const float errorRate = currentPidSetpoint - gyroRate;       // r - y
+
+        // -----calculate P component and add Dynamic Part based on stick input
+        axisPID_P[axis] = Kp[axis] * errorRate * tpaFactor;
+        if (axis == FD_YAW) {
+            axisPID_P[axis] = ptermYawFilterApplyFn(ptermYawFilter, axisPID_P[axis]);
+        }
+
+        // -----calculate I component
+        if (motorMixRange < 1.0f) {
+            // Only increase ITerm if motor output is not saturated
+            axisPID_I[axis] += Ki[axis] * errorRate * dT * dynKi * itermAccelerator;
+        }
+
+        // -----calculate D component
+        if (axis != FD_YAW) {
+            float dynC = dtermSetpointWeight;
+            if (pidProfile->setpointRelaxRatio < 100) {
+                dynC *= MIN(getRcDeflectionAbs(axis) * relaxFactor, 1.0f);
+            }
+            const float rD = dynC * currentPidSetpoint - gyroRate;    // cr - y
+            // Divide rate change by dT to get differential (ie dr/dt)
+            float delta = (rD - previousRateError[axis]) / dT;
+            previousRateError[axis] = rD;
+
+            // apply filters
+            delta = dtermNotchFilterApplyFn(dtermFilterNotch[axis], delta);
+            delta = dtermLpfApplyFn(dtermFilterLpf[axis], delta);
+
+            axisPID_D[axis] = Kd[axis] * delta * tpaFactor;
+        }
+
+        // Disable PID control at zero throttle
+        if (!pidStabilisationEnabled) {
+            axisPID_P[axis] = 0;
+            axisPID_I[axis] = 0;
+            axisPID_D[axis] = 0;
+        }
+    }
 }

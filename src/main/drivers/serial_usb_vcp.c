@@ -16,20 +16,30 @@
  */
 
 #include <stdint.h>
-#include <stdlib.h>
 #include <stdbool.h>
-#include <string.h>
 
-#include <platform.h>
+#include "platform.h"
 
 #include "build/build_config.h"
-#include "common/utils.h"
 
+#include "common/utils.h"
+#include "io.h"
+
+#if defined(STM32F4)
+#include "usb_core.h"
+#include "usbd_cdc_vcp.h"
+#include "usb_io.h"
+#elif defined(STM32F7)
+#include "vcp_hal/usbd_cdc_interface.h"
+#include "usb_io.h"
+USBD_HandleTypeDef USBD_Device;
+#else
 #include "usb_core.h"
 #include "usb_init.h"
 #include "hw_config.h"
+#endif
 
-#include "drivers/system.h"
+#include "system.h"
 
 #include "serial.h"
 #include "serial_usb_vcp.h"
@@ -65,7 +75,7 @@ static uint32_t usbVcpAvailable(const serialPort_t *instance)
 {
     UNUSED(instance);
 
-    return receiveLength;
+    return CDC_Receive_BytesAvailable();
 }
 
 static uint8_t usbVcpRead(serialPort_t *instance)
@@ -84,16 +94,14 @@ static void usbVcpWriteBuf(serialPort_t *instance, const void *data, int count)
 {
     UNUSED(instance);
 
-
     if (!(usbIsConnected() && usbIsConfigured())) {
         return;
     }
 
-    const uint32_t start = millis();
+    uint32_t start = millis();
     const uint8_t *p = data;
-    uint32_t txed = 0;
     while (count > 0) {
-        txed = CDC_Send_DATA(p, count);
+        uint32_t txed = CDC_Send_DATA(p, count);
         count -= txed;
         p += txed;
 
@@ -105,7 +113,7 @@ static void usbVcpWriteBuf(serialPort_t *instance, const void *data, int count)
 
 static bool usbVcpFlush(vcpPort_t *port)
 {
-    uint8_t count = port->txAt;
+    uint32_t count = port->txAt;
     port->txAt = 0;
 
     if (count == 0) {
@@ -116,11 +124,10 @@ static bool usbVcpFlush(vcpPort_t *port)
         return false;
     }
 
-    const uint32_t start = millis();
+    uint32_t start = millis();
     uint8_t *p = port->txBuf;
-    uint32_t txed = 0;
     while (count > 0) {
-        txed = CDC_Send_DATA(p, count);
+        uint32_t txed = CDC_Send_DATA(p, count);
         count -= txed;
         p += txed;
 
@@ -147,10 +154,9 @@ static void usbVcpBeginWrite(serialPort_t *instance)
     port->buffering = true;
 }
 
-uint8_t usbTxBytesFree()
+uint32_t usbTxBytesFree()
 {
-    // Because we block upon transmit and don't buffer bytes, our "buffer" capacity is effectively unlimited.
-    return 255;
+    return CDC_Send_FreeBytes();
 }
 
 static void usbVcpEndWrite(serialPort_t *instance)
@@ -169,9 +175,9 @@ static const struct serialPortVTable usbVTable[] = {
         .serialSetBaudRate = usbVcpSetBaudRate,
         .isSerialTransmitBufferEmpty = isUsbVcpTransmitBufferEmpty,
         .setMode = usbVcpSetMode,
+        .writeBuf = usbVcpWriteBuf,
         .beginWrite = usbVcpBeginWrite,
-        .endWrite = usbVcpEndWrite,
-        .writeBuf = usbVcpWriteBuf
+        .endWrite = usbVcpEndWrite
     }
 };
 
@@ -179,16 +185,41 @@ serialPort_t *usbVcpOpen(void)
 {
     vcpPort_t *s;
 
+#if defined(STM32F4)
+    usbGenerateDisconnectPulse();
+
+    IOInit(IOGetByTag(IO_TAG(PA11)), OWNER_USB, 0);
+    IOInit(IOGetByTag(IO_TAG(PA12)), OWNER_USB, 0);
+    USBD_Init(&USB_OTG_dev, USB_OTG_FS_CORE_ID, &USR_desc, &USBD_CDC_cb, &USR_cb);
+#elif defined(STM32F7)
+    usbGenerateDisconnectPulse();
+
+    IOInit(IOGetByTag(IO_TAG(PA11)), OWNER_USB, 0);
+    IOInit(IOGetByTag(IO_TAG(PA12)), OWNER_USB, 0);
+    /* Init Device Library */
+    USBD_Init(&USBD_Device, &VCP_Desc, 0);
+
+    /* Add Supported Class */
+    USBD_RegisterClass(&USBD_Device, USBD_CDC_CLASS);
+
+    /* Add CDC Interface Class */
+    USBD_CDC_RegisterInterface(&USBD_Device, &USBD_CDC_fops);
+
+    /* Start Device Process */
+    USBD_Start(&USBD_Device);
+#else
     Set_System();
     Set_USBClock();
-    USB_Interrupts_Config();
     USB_Init();
+    USB_Interrupts_Config();
+#endif
 
     s = &vcpPort;
     s->port.vTable = usbVTable;
 
     return (serialPort_t *)s;
 }
+
 uint32_t usbVcpGetBaudRate(serialPort_t *instance)
 {
     UNUSED(instance);

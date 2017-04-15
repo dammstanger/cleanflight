@@ -17,6 +17,11 @@
 
 #pragma once
 
+#include "config/parameter_group.h"
+#include "common/axis.h"
+#include "drivers/io_types.h"
+#include "drivers/sensor.h"
+
 typedef enum {
     GYRO_NONE = 0,
     GYRO_DEFAULT,
@@ -26,31 +31,50 @@ typedef enum {
     GYRO_L3GD20,
     GYRO_MPU6000,
     GYRO_MPU6500,
+    GYRO_MPU9250,
+    GYRO_ICM20601,
+    GYRO_ICM20602,
+    GYRO_ICM20608G,
+    GYRO_ICM20689,
+    GYRO_BMI160,
     GYRO_FAKE
 } gyroSensor_e;
 
-extern gyro_t gyro;
-extern sensor_align_e gyroAlign;
+typedef struct gyro_s {
+    uint32_t targetLooptime;
+    float gyroADCf[XYZ_AXIS_COUNT];
+} gyro_t;
 
-extern int32_t gyroADC[XYZ_AXIS_COUNT];
-extern float gyroADCf[XYZ_AXIS_COUNT];
+extern gyro_t gyro;
 
 typedef struct gyroConfig_s {
-    uint8_t gyroMovementCalibrationThreshold;   // people keep forgetting that moving model while init results in wrong gyro offsets. and then they never reset gyro. so this is now on by default.
-    uint8_t gyro_lpf;                           // gyro LPF setting - values are driver specific, in case of invalid number, a reasonable default ~30-40HZ is chosen.
-    uint8_t gyro_soft_type;                     // Gyro Filter Type
-    uint16_t gyro_soft_lpf_hz;                  // Software based gyro filter in hz
-    uint16_t gyro_soft_notch_hz;                // Biquad gyro notch hz
-    uint16_t gyro_soft_notch_cutoff_hz;         // Biquad gyro notch low cutoff in hz
-    uint8_t gyro_sync;                          // Enable interrupt based loop
-    uint8_t pid_process_denom;                  // Processing denominator for PID controller vs gyro sampling rate
-    uint16_t gyro_sample_hz;                    // The desired gyro sample frequency.
+    sensor_align_e gyro_align;              // gyro alignment
+    uint8_t  gyroMovementCalibrationThreshold; // people keep forgetting that moving model while init results in wrong gyro offsets. and then they never reset gyro. so this is now on by default.
+    uint8_t  gyro_sync_denom;                  // Gyro sample divider
+    uint8_t  gyro_lpf;                         // gyro LPF setting - values are driver specific, in case of invalid number, a reasonable default ~30-40HZ is chosen.
+    uint8_t  gyro_soft_lpf_type;
+    uint8_t  gyro_soft_lpf_hz;
+    bool     gyro_isr_update;
+    bool     gyro_use_32khz;
+    uint8_t  gyro_to_use;
+    uint16_t gyro_soft_notch_hz_1;
+    uint16_t gyro_soft_notch_cutoff_1;
+    uint16_t gyro_soft_notch_hz_2;
+    uint16_t gyro_soft_notch_cutoff_2;
 } gyroConfig_t;
 
 PG_DECLARE(gyroConfig_t, gyroConfig);
 
-void gyroInit(void);
+bool gyroInit(void);
+void gyroInitFilters(void);
 void gyroUpdate(void);
-void gyroSetCalibrationCycles(uint16_t calibrationCyclesRequired);
+const busDevice_t *gyroSensorBus(void);
+struct mpuConfiguration_s;
+const struct mpuConfiguration_s *gyroMpuConfiguration(void);
+struct mpuDetectionResult_s;
+const struct mpuDetectionResult_s *gyroMpuDetectionResult(void);
+void gyroSetCalibrationCycles(void);
 bool isGyroCalibrationComplete(void);
-
+void gyroReadTemperature(void);
+int16_t gyroGetTemperature(void);
+int16_t gyroRateDps(int axis);

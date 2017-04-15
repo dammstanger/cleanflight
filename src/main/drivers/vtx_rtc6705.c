@@ -27,12 +27,14 @@
 
 #include "platform.h"
 
+#ifdef VTX
+
 #include "common/maths.h"
 
-#include "drivers/vtx_rtc6705.h"
-#include "drivers/bus_spi.h"
-#include "drivers/system.h"
-#include "drivers/gpio.h"
+#include "vtx_rtc6705.h"
+#include "io.h"
+#include "bus_spi.h"
+#include "system.h"
 
 #define RTC6705_SET_HEAD 0x3210 //fosc=8mhz r=400
 #define RTC6705_SET_A1 0x8F3031 //5865
@@ -83,33 +85,38 @@
 #define RTC6705_SET_DIVMULT 1000000 //Division value (to fit into a uint32_t) (Hz to MHz)
 
 #define DISABLE_RTC6705 GPIO_SetBits(RTC6705_CS_GPIO,   RTC6705_CS_PIN)
-#ifdef USE_RTC6705_CLK_HACK
-// HACK for missing pull up on CLK line - drive the CLK high *before* enabling the CS pin.
-#define ENABLE_RTC6705  {GPIO_SetBits(RTC6705_CLK_GPIO, RTC6705_CLK_PIN); delayMicroseconds(5); GPIO_ResetBits(RTC6705_CS_GPIO, RTC6705_CS_PIN); }
-#else
 #define ENABLE_RTC6705  GPIO_ResetBits(RTC6705_CS_GPIO, RTC6705_CS_PIN)
+
+#ifdef RTC6705_POWER_PIN
+static IO_t vtxPowerPin        = IO_NONE;
 #endif
 
-#define DISABLE_RTC6705_POWER GPIO_SetBits(RTC6705_POWER_GPIO,   RTC6705_POWER_PIN)
-#define ENABLE_RTC6705_POWER  GPIO_ResetBits(RTC6705_POWER_GPIO, RTC6705_POWER_PIN)
+#define ENABLE_VTX_POWER       IOLo(vtxPowerPin)
+#define DISABLE_VTX_POWER      IOHi(vtxPowerPin)
 
-#define DP_5G_MASK          0x7000 // b111000000000000
-#define PA5G_BS_MASK        0x0E00 // b000111000000000
-#define PA5G_PW_MASK        0x0180 // b000000110000000
-#define PD_Q5G_MASK         0x0040 // b000000001000000
-#define QI_5G_MASK          0x0038 // b000000000111000
-#define PA_BS_MASK          0x0007 // b000000000000111
-
-#define PA_CONTROL_DEFAULT  0x4FBD
 
 // Define variables
-static const uint32_t channelArray[RTC6705_BAND_COUNT][RTC6705_CHANNEL_COUNT] = {
+static const uint32_t channelArray[RTC6705_BAND_MAX][RTC6705_CHANNEL_MAX] = {
     { RTC6705_SET_A1, RTC6705_SET_A2, RTC6705_SET_A3, RTC6705_SET_A4, RTC6705_SET_A5, RTC6705_SET_A6, RTC6705_SET_A7, RTC6705_SET_A8 },
     { RTC6705_SET_B1, RTC6705_SET_B2, RTC6705_SET_B3, RTC6705_SET_B4, RTC6705_SET_B5, RTC6705_SET_B6, RTC6705_SET_B7, RTC6705_SET_B8 },
     { RTC6705_SET_E1, RTC6705_SET_E2, RTC6705_SET_E3, RTC6705_SET_E4, RTC6705_SET_E5, RTC6705_SET_E6, RTC6705_SET_E7, RTC6705_SET_E8 },
     { RTC6705_SET_F1, RTC6705_SET_F2, RTC6705_SET_F3, RTC6705_SET_F4, RTC6705_SET_F5, RTC6705_SET_F6, RTC6705_SET_F7, RTC6705_SET_F8 },
     { RTC6705_SET_R1, RTC6705_SET_R2, RTC6705_SET_R3, RTC6705_SET_R4, RTC6705_SET_R5, RTC6705_SET_R6, RTC6705_SET_R7, RTC6705_SET_R8 },
 };
+
+/**
+ * Send a command and return if good
+ * TODO chip detect
+ */
+static bool rtc6705IsReady(void)
+{
+    // Sleep a little bit to make sure it has booted
+    delay(50);
+
+    // TODO Do a read and get current config (note this would be reading on MOSI (data) line)
+
+    return true;
+}
 
 /**
  * Reverse a uint32_t (LSB to MSB)
@@ -131,32 +138,20 @@ static uint32_t reverse32(uint32_t in)
 /**
  * Start chip if available
  */
-void rtc6705IOInit(void)
+
+bool rtc6705Init(void)
 {
-    gpio_config_t gpio;
-
 #ifdef RTC6705_POWER_PIN
-    RCC_AHBPeriphClockCmd(RTC6705_POWER_PERIPHERAL, ENABLE);
+    vtxPowerPin = IOGetByTag(IO_TAG(RTC6705_POWER_PIN));
+    IOInit(vtxPowerPin, OWNER_VTX, 0);
+    IOConfigGPIO(vtxPowerPin, IOCFG_OUT_PP);
 
-    DISABLE_RTC6705_POWER;
-
-    gpio.pin = RTC6705_POWER_PIN;
-    gpio.speed = Speed_2MHz;
-    gpio.mode = Mode_Out_PP;
-    gpioInit(RTC6705_POWER_GPIO, &gpio);
+    ENABLE_VTX_POWER;
 #endif
 
-    RCC_AHBPeriphClockCmd(RTC6705_CS_PERIPHERAL, ENABLE);
-
     DISABLE_RTC6705;
-
-    // GPIO bit is enabled so here so the output is not pulled low when the GPIO is set in output mode.
-    // Note: It's critical to ensure that incorrect signals are not sent to the VTX.
-
-    gpio.pin = RTC6705_CS_PIN;
-    gpio.speed = Speed_2MHz;
-    gpio.mode = Mode_Out_PP;
-    gpioInit(RTC6705_CS_GPIO, &gpio);
+    spiSetDivisor(RTC6705_SPI_INSTANCE, SPI_CLOCK_SLOW);
+    return rtc6705IsReady();
 }
 
 /**
@@ -175,11 +170,7 @@ static void rtc6705Transfer(uint32_t command)
     spiTransferByte(RTC6705_SPI_INSTANCE, (command >> 8) & 0xFF);
     spiTransferByte(RTC6705_SPI_INSTANCE, (command >> 0) & 0xFF);
 
-    delayMicroseconds(2);
-
     DISABLE_RTC6705;
-
-    delayMicroseconds(2);
 }
 
 /**
@@ -187,13 +178,11 @@ static void rtc6705Transfer(uint32_t command)
  */
 void rtc6705SetChannel(uint8_t band, uint8_t channel)
 {
-    band = constrain(band, 0, RTC6705_BAND_COUNT - 1);
-    channel = constrain(channel, 0, RTC6705_CHANNEL_COUNT - 1);
-
-    spiSetDivisor(RTC6705_SPI_INSTANCE, SPI_CLOCK_SLOW);
+    band = constrain(band, RTC6705_BAND_MIN, RTC6705_BAND_MAX);
+    channel = constrain(channel, RTC6705_CHANNEL_MIN, RTC6705_CHANNEL_MAX);
 
     rtc6705Transfer(RTC6705_SET_HEAD);
-    rtc6705Transfer(channelArray[band][channel]);
+    rtc6705Transfer(channelArray[band-1][channel-1]);
 }
 
  /**
@@ -213,35 +202,8 @@ void rtc6705SetFreq(uint16_t freq)
     val_hex |= (val_a << 5);
     val_hex |= (val_n << 12);
 
-    spiSetDivisor(RTC6705_SPI_INSTANCE, SPI_CLOCK_SLOW);
-
     rtc6705Transfer(RTC6705_SET_HEAD);
-    delayMicroseconds(10);
     rtc6705Transfer(val_hex);
 }
 
-void rtc6705SetRFPower(uint8_t rf_power)
-{
-    spiSetDivisor(RTC6705_SPI_INSTANCE, SPI_CLOCK_SLOW);
-
-    uint32_t val_hex = 0x10; // write
-    val_hex |= 7; // address
-    uint32_t data = rf_power == 0 ? (PA_CONTROL_DEFAULT | PD_Q5G_MASK) & (~(PA5G_PW_MASK | PA5G_BS_MASK)) : PA_CONTROL_DEFAULT;
-    val_hex |= data << 5; // 4 address bits and 1 rw bit.
-
-    rtc6705Transfer(val_hex);
-}
-
-void rtc6705Disable(void)
-{
-#ifdef RTC6705_POWER_PIN
-    DISABLE_RTC6705_POWER;
 #endif
-}
-
-void rtc6705Enable(void)
-{
-#ifdef RTC6705_POWER_PIN
-    ENABLE_RTC6705_POWER;
-#endif
-}

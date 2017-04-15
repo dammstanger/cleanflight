@@ -18,7 +18,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#include <platform.h>
+#include "platform.h"
 
 #include "serial.h"
 
@@ -61,7 +61,7 @@ uint32_t serialRxBytesWaiting(const serialPort_t *instance)
     return instance->vTable->serialTotalRxWaiting(instance);
 }
 
-uint8_t serialTxBytesFree(const serialPort_t *instance)
+uint32_t serialTxBytesFree(const serialPort_t *instance)
 {
     return instance->vTable->serialTotalTxFree(instance);
 }
@@ -86,7 +86,7 @@ void serialSetMode(serialPort_t *instance, portMode_t mode)
     instance->vTable->setMode(instance, mode);
 }
 
-void serialWriteBufShim(void *instance, uint8_t *data, int count)
+void serialWriteBufShim(void *instance, const uint8_t *data, int count)
 {
     serialWriteBuf((serialPort_t *)instance, data, count);
 }
