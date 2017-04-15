@@ -21,8 +21,8 @@
 #include "axis.h"
 #include "maths.h"
 
-#if defined(FAST_TRIGONOMETRY) || defined(EVEN_FASTER_TRIGONOMETRY)
-#if defined(EVEN_FASTER_TRIGONOMETRY)
+#if defined(FAST_MATH) || defined(VERY_FAST_MATH)
+#if defined(VERY_FAST_MATH)
 
 // http://lolengine.net/blog/2011/12/21/better-function-approximations
 // Chebyshev http://stackoverflow.com/questions/345085/how-do-trigonometric-functions-work/345117#345117
@@ -99,6 +99,13 @@ float acos_approx(float x)
 }
 #endif
 
+float powerf(float base, int exp) {
+    float result = base;
+    for (int count = 1; count < exp; count++) result *= base;
+
+    return result;
+}
+
 int32_t applyDeadband(int32_t value, int32_t deadband)
 {
     if (ABS(value) < deadband) {
@@ -109,26 +116,6 @@ int32_t applyDeadband(int32_t value, int32_t deadband)
         value += deadband;
     }
     return value;
-}
-
-int constrain(int amt, int low, int high)
-{
-    if (amt < low)
-        return low;
-    else if (amt > high)
-        return high;
-    else
-        return amt;
-}
-
-float constrainf(float amt, float low, float high)
-{
-    if (amt < low)
-        return low;
-    else if (amt > high)
-        return high;
-    else
-        return amt;
 }
 
 void devClear(stdev_t *dev)
@@ -165,11 +152,10 @@ float degreesToRadians(int16_t degrees)
     return degrees * RAD;
 }
 
-int scaleRange(int x, int srcMin, int srcMax, int destMin, int destMax)
-{
-    long int a = ((long int) destMax - (long int) destMin) * ((long int) x - (long int) srcMin);
-    long int b = (long int) srcMax - (long int) srcMin;
-    return ((a / b) - (destMax - destMin)) + destMax;
+int scaleRange(int x, int srcFrom, int srcTo, int destFrom, int destTo) {
+    long int a = ((long int) destTo - (long int) destFrom) * ((long int) x - (long int) srcFrom);
+    long int b = (long int) srcTo - (long int) srcFrom;
+    return (a / b) + destFrom;
 }
 
 // Normalize a vector
@@ -233,6 +219,8 @@ void rotateV(struct fp_vector *v, fp_angles_t *delta)
 #define QMF_SORT(a,b) { if ((a)>(b)) QMF_SWAP((a),(b)); }
 #define QMF_SWAP(a,b) { int32_t temp=(a);(a)=(b);(b)=temp; }
 #define QMF_COPY(p,v,n) { int32_t i; for (i=0; i<n; i++) p[i]=v[i]; }
+#define QMF_SORTF(a,b) { if ((a)>(b)) QMF_SWAPF((a),(b)); }
+#define QMF_SWAPF(a,b) { float temp=(a);(a)=(b);(b)=temp; }
 
 int32_t quickMedianFilter3(int32_t * v)
 {
@@ -250,7 +238,7 @@ int32_t quickMedianFilter5(int32_t * v)
 
     QMF_SORT(p[0], p[1]); QMF_SORT(p[3], p[4]); QMF_SORT(p[0], p[3]);
     QMF_SORT(p[1], p[4]); QMF_SORT(p[1], p[2]); QMF_SORT(p[2], p[3]);
-    QMF_SORT(p[1], p[2]); 
+    QMF_SORT(p[1], p[2]);
     return p[2];
 }
 
@@ -282,9 +270,107 @@ int32_t quickMedianFilter9(int32_t * v)
     return p[4];
 }
 
+float quickMedianFilter3f(float * v)
+{
+    float p[3];
+    QMF_COPY(p, v, 3);
+
+    QMF_SORTF(p[0], p[1]); QMF_SORTF(p[1], p[2]); QMF_SORTF(p[0], p[1]) ;
+    return p[1];
+}
+
+float quickMedianFilter5f(float * v)
+{
+    float p[5];
+    QMF_COPY(p, v, 5);
+
+    QMF_SORTF(p[0], p[1]); QMF_SORTF(p[3], p[4]); QMF_SORTF(p[0], p[3]);
+    QMF_SORTF(p[1], p[4]); QMF_SORTF(p[1], p[2]); QMF_SORTF(p[2], p[3]);
+    QMF_SORTF(p[1], p[2]);
+    return p[2];
+}
+
+float quickMedianFilter7f(float * v)
+{
+    float p[7];
+    QMF_COPY(p, v, 7);
+
+    QMF_SORTF(p[0], p[5]); QMF_SORTF(p[0], p[3]); QMF_SORTF(p[1], p[6]);
+    QMF_SORTF(p[2], p[4]); QMF_SORTF(p[0], p[1]); QMF_SORTF(p[3], p[5]);
+    QMF_SORTF(p[2], p[6]); QMF_SORTF(p[2], p[3]); QMF_SORTF(p[3], p[6]);
+    QMF_SORTF(p[4], p[5]); QMF_SORTF(p[1], p[4]); QMF_SORTF(p[1], p[3]);
+    QMF_SORTF(p[3], p[4]);
+    return p[3];
+}
+
+float quickMedianFilter9f(float * v)
+{
+    float p[9];
+    QMF_COPY(p, v, 9);
+
+    QMF_SORTF(p[1], p[2]); QMF_SORTF(p[4], p[5]); QMF_SORTF(p[7], p[8]);
+    QMF_SORTF(p[0], p[1]); QMF_SORTF(p[3], p[4]); QMF_SORTF(p[6], p[7]);
+    QMF_SORTF(p[1], p[2]); QMF_SORTF(p[4], p[5]); QMF_SORTF(p[7], p[8]);
+    QMF_SORTF(p[0], p[3]); QMF_SORTF(p[5], p[8]); QMF_SORTF(p[4], p[7]);
+    QMF_SORTF(p[3], p[6]); QMF_SORTF(p[1], p[4]); QMF_SORTF(p[2], p[5]);
+    QMF_SORTF(p[4], p[7]); QMF_SORTF(p[4], p[2]); QMF_SORTF(p[6], p[4]);
+    QMF_SORTF(p[4], p[2]);
+    return p[4];
+}
+
 void arraySubInt32(int32_t *dest, int32_t *array1, int32_t *array2, int count)
 {
     for (int i = 0; i < count; i++) {
         dest[i] = array1[i] - array2[i];
     }
 }
+
+int16_t qPercent(fix12_t q) {
+    return (100 * q) >> 12;
+}
+
+int16_t qMultiply(fix12_t q, int16_t input) {
+    return (input *  q) >> 12;
+}
+
+fix12_t  qConstruct(int16_t num, int16_t den) {
+    return (num << 12) / den;
+}
+
+uint16_t crc16_ccitt(uint16_t crc, unsigned char a)
+{
+    crc ^= (uint16_t)a << 8;
+    for (int ii = 0; ii < 8; ++ii) {
+        if (crc & 0x8000) {
+            crc = (crc << 1) ^ 0x1021;
+        } else {
+            crc = crc << 1;
+        }
+    }
+    return crc;
+}
+
+uint16_t crc16_ccitt_update(uint16_t crc, const void *data, uint32_t length)
+{
+    const uint8_t *p = (const uint8_t *)data;
+    const uint8_t *pend = p + length;
+
+    for (; p != pend; p++) {
+        crc = crc16_ccitt(crc, *p);
+    }
+    return crc;
+}
+
+uint8_t crc8_dvb_s2(uint8_t crc, unsigned char a)
+{
+    crc ^= a;
+    for (int ii = 0; ii < 8; ++ii) {
+        if (crc & 0x80) {
+            crc = (crc << 1) ^ 0xD5;
+        } else {
+            crc = crc << 1;
+        }
+    }
+    return crc;
+}
+

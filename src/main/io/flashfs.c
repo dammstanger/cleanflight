@@ -33,12 +33,10 @@
 #include <stdbool.h>
 #include <string.h>
 
-#ifdef CUSTOM_FLASHCHIP
-#include "config/parameter_group.h"
-#endif
-
+#include "drivers/flash.h"
 #include "drivers/flash_m25p16.h"
-#include "flashfs.h"
+
+#include "io/flashfs.h"
 
 static uint8_t flashWriteBuffer[FLASHFS_WRITE_BUFFER_SIZE];
 
@@ -505,7 +503,7 @@ int flashfsIdentifyStartOfFreeSpace()
 
         /* We don't expect valid data to ever contain this many consecutive uint32_t's of all 1 bits: */
         FREE_BLOCK_TEST_SIZE_INTS = 4, // i.e. 16 bytes
-        FREE_BLOCK_TEST_SIZE_BYTES = FREE_BLOCK_TEST_SIZE_INTS * sizeof(uint32_t),
+        FREE_BLOCK_TEST_SIZE_BYTES = FREE_BLOCK_TEST_SIZE_INTS * sizeof(uint32_t)
     };
 
     union {
@@ -555,8 +553,7 @@ int flashfsIdentifyStartOfFreeSpace()
 /**
  * Returns true if the file pointer is at the end of the device.
  */
-bool flashfsIsEOF()
-{
+bool flashfsIsEOF() {
     return tailAddress >= flashfsGetSize();
 }
 

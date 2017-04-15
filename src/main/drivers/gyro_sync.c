@@ -1,42 +1,57 @@
 /*
- * This file is part of Cleanflight.
+ * gyro_sync.c
  *
- * Cleanflight is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * Cleanflight is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with Cleanflight.  If not, see <http://www.gnu.org/licenses/>.
+ *  Created on: 3 aug. 2015
+ *      Author: borisb
  */
+
 #include <stdbool.h>
 #include <stdint.h>
-#include <stdlib.h>
 
-#include <platform.h>
-#include "build/build_config.h"
+#include "platform.h"
 
-#include "drivers/system.h"
-#include "drivers/gyro_sync.h"
+#include "sensor.h"
+#include "accgyro.h"
+#include "gyro_sync.h"
 
-volatile bool gyroDataReady = false;
 
-void gyroSyncIntHandler(void)
+bool gyroSyncCheckUpdate(gyroDev_t *gyro)
 {
-    gyroDataReady = true;
+    if (!gyro->intStatus)
+        return false;
+    return gyro->intStatus(gyro);
 }
 
-bool gyroSyncIsDataReady(void)
+uint32_t gyroSetSampleRate(gyroDev_t *gyro, uint8_t lpf, uint8_t gyroSyncDenominator, bool gyro_use_32khz)
 {
-    if (gyroDataReady) {
-        gyroDataReady = false;
-        return true;
+    float gyroSamplePeriod;
+
+    if (lpf == GYRO_LPF_256HZ || lpf == GYRO_LPF_NONE) {
+        if (gyro_use_32khz) {
+            gyro->gyroRateKHz = GYRO_RATE_32_kHz;
+            gyroSamplePeriod = 31.5f;
+        } else {
+#ifdef USE_ACCGYRO_BMI160
+            gyro->gyroRateKHz = GYRO_RATE_3200_Hz;
+            gyroSamplePeriod = 312.0f;
+#else
+            gyro->gyroRateKHz = GYRO_RATE_8_kHz;
+            gyroSamplePeriod = 125.0f;
+#endif
+        }
+    } else {
+        gyro->gyroRateKHz = GYRO_RATE_1_kHz;
+        gyroSamplePeriod = 1000.0f;
+        gyroSyncDenominator = 1; // Always full Sampling 1khz
     }
 
-    return false;
+    // calculate gyro divider and targetLooptime (expected cycleTime)
+    gyro->mpuDividerDrops  = gyroSyncDenominator - 1;
+    const uint32_t targetLooptime = (uint32_t)(gyroSyncDenominator * gyroSamplePeriod);
+    return targetLooptime;
+}
+
+uint8_t gyroMPU6xxxGetDividerDrops(const gyroDev_t *gyro)
+{
+    return gyro->mpuDividerDrops;
 }

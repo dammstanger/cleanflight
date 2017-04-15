@@ -17,7 +17,4 @@
 
 #pragma once
 
-#include "rx/rx.h"
-
-bool xBusInit(const rxConfig_t *initialRxConfig, rxRuntimeConfig_t *rxRuntimeConfig);
-uint8_t xBusFrameStatus(void);
+bool xBusInit(const rxConfig_t *rxConfig, rxRuntimeConfig_t *rxRuntimeConfig);

@@ -17,166 +17,163 @@
 
 #pragma once
 
-#define TARGET_BOARD_IDENTIFIER "LUXR" // LUX Race
+#ifdef LUXV2_RACE
+#define TARGET_BOARD_IDENTIFIER "LUXR"
+#else
+#define TARGET_BOARD_IDENTIFIER "LUX"
+#endif
+#define BOARD_HAS_VOLTAGE_DIVIDER
 
-#define LED0_GPIO   GPIOC
-#define LED0_PIN    Pin_15
-#define LED0_PERIPHERAL RCC_AHBPeriph_GPIOC
+#define CONFIG_FASTLOOP_PREFERRED_ACC ACC_DEFAULT
 
-#define LED1_GPIO   GPIOC
-#define LED1_PIN    Pin_14
-#define LED1_PERIPHERAL RCC_AHBPeriph_GPIOC
+#define LED0                    PC15
+#define LED1                    PC14
+#ifndef LUXV2_RACE
+#define LED2                    PC13
+#endif
 
-#define LED2_GPIO   GPIOC
-#define LED2_PIN    Pin_13
-#define LED2_PERIPHERAL RCC_AHBPeriph_GPIOC
-
-#define BEEP_GPIO   GPIOB
-#define BEEP_PIN    Pin_13
-#define BEEP_PERIPHERAL RCC_AHBPeriph_GPIOB
+#ifdef LUXV2_RACE
+#define BEEPER                  PB9
+#else
+#define BEEPER                  PB13
+#endif
 #define BEEPER_INVERTED
 
-#define MPU6500_CS_GPIO_CLK_PERIPHERAL   RCC_AHBPeriph_GPIOA
-#define MPU6500_CS_GPIO                  GPIOA
-#define MPU6500_CS_PIN                   GPIO_Pin_4
-#define MPU6500_SPI_INSTANCE             SPI1
+// MPU6500 interrupt
+#define USE_EXTI
+#define MPU_INT_EXTI            PA5
+//#define DEBUG_MPU_DATA_READY_INTERRUPT
+#define USE_MPU_DATA_READY_SIGNAL
+#define ENSURE_MPU_DATA_READY_IS_LOW
+
+#define USE_ESC_SENSOR
 
 #define USE_SPI
 #define USE_SPI_DEVICE_1
+#ifdef LUXV2_RACE
+#define USE_SPI_DEVICE_2
+#endif
 
-#define SPI1_GPIO               GPIOB
-#define SPI1_GPIO_PERIPHERAL    RCC_AHBPeriph_GPIOB
-#define SPI1_SCK_PIN            GPIO_Pin_3
-#define SPI1_SCK_PIN_SOURCE     GPIO_PinSource3
-#define SPI1_MISO_PIN           GPIO_Pin_4
-#define SPI1_MISO_PIN_SOURCE    GPIO_PinSource4
-#define SPI1_MOSI_PIN           GPIO_Pin_5
-#define SPI1_MOSI_PIN_SOURCE    GPIO_PinSource5
+#define SPI1_SCK_PIN            PB3
+#define SPI1_MISO_PIN           PB4
+#define SPI1_MOSI_PIN           PB5
+//#ifndef LUXV2_RACE
+#define SPI1_NSS_PIN            PA4
+//#endif
 
-#define USABLE_TIMER_CHANNEL_COUNT 11
+#ifdef LUXV2_RACE
+#define SPI2_NSS_PIN            PB12
+#define SPI2_SCK_PIN            PB13
+#define SPI2_MISO_PIN           PB14
+#define SPI2_MOSI_PIN           PB15
+
+#define USE_SDCARD
+#define USE_SDCARD_SPI2
+
+#define SDCARD_DETECT_INVERTED
+
+#define SDCARD_DETECT_PIN                   PC13
+#define SDCARD_SPI_INSTANCE                 SPI2
+#define SDCARD_SPI_CS_PIN                   SPI2_NSS_PIN
+
+// SPI2 is on the APB1 bus whose clock runs at 36MHz. Divide to under 400kHz for init:
+#define SDCARD_SPI_INITIALIZATION_CLOCK_DIVIDER 128
+// Divide to under 25MHz for normal operation:
+#define SDCARD_SPI_FULL_SPEED_CLOCK_DIVIDER     2
+
+// Note, this is the same DMA channel as UART1_RX. Luckily we don't use DMA for USART Rx.
+#define SDCARD_DMA_CHANNEL_TX               DMA1_Channel5
+#define SDCARD_DMA_CHANNEL_TX_COMPLETE_FLAG DMA1_FLAG_TC5
+#endif
+
+#define MPU6000_CS_PIN          SPI1_NSS_PIN
+#define MPU6000_SPI_INSTANCE    SPI1
+#define MPU6500_CS_PIN          SPI1_NSS_PIN
+#define MPU6500_SPI_INSTANCE    SPI1
 
 #define GYRO
+#ifdef LUXV2_RACE
+#define USE_GYRO_MPU6000
+#define USE_GYRO_SPI_MPU6000
+#define GYRO_MPU6000_ALIGN CW270_DEG
+#else
 #define USE_GYRO_MPU6500
 #define USE_GYRO_SPI_MPU6500
 #define GYRO_MPU6500_ALIGN CW270_DEG
+#endif
 
 #define ACC
+#ifdef LUXV2_RACE
+#define USE_ACC_MPU6000
+#define USE_ACC_SPI_MPU6000
+#define ACC_MPU6000_ALIGN CW270_DEG
+#else
 #define USE_ACC_MPU6500
 #define USE_ACC_SPI_MPU6500
 #define ACC_MPU6500_ALIGN CW270_DEG
-
-#define BEEPER
-#define LED0
-#define LED1
-#define LED2
-
-#define USB_IO
+#endif
 
 #define USE_VCP
 #define USE_UART1
 #define USE_UART2
 #define USE_UART3
-#define SERIAL_PORT_COUNT 4
+#define USE_SOFTSERIAL1
+#define USE_SOFTSERIAL2
+#ifdef LUXV2_RACE
+#  define USE_UART4
+#  define USE_UART5
+#  define SERIAL_PORT_COUNT       8
+#else
+#  define SERIAL_PORT_COUNT       6
+#endif
 
-#define USE_UART1_TX_DMA
-#define UART1_TX_PIN        GPIO_Pin_4
-#define UART1_RX_PIN        GPIO_Pin_5
-#define UART1_GPIO          GPIOC
-#define UART1_GPIO_AF       GPIO_AF_7
-#define UART1_TX_PINSOURCE  GPIO_PinSource4
-#define UART1_RX_PINSOURCE  GPIO_PinSource5
+#define UART1_TX_PIN            PC4
+#define UART1_RX_PIN            PC5
 
-#define UART2_TX_PIN        GPIO_Pin_14
-#define UART2_RX_PIN        GPIO_Pin_15
-#define UART2_GPIO          GPIOA
-#define UART2_GPIO_AF       GPIO_AF_7
-#define UART2_TX_PINSOURCE  GPIO_PinSource14
-#define UART2_RX_PINSOURCE  GPIO_PinSource15
+#define UART2_TX_PIN            PA14
+#define UART2_RX_PIN            PA15
 
-#define UART3_TX_PIN        GPIO_Pin_10
-#define UART3_RX_PIN        GPIO_Pin_11
-#define UART3_GPIO          GPIOB
-#define UART3_GPIO_AF       GPIO_AF_7
-#define UART3_TX_PINSOURCE  GPIO_PinSource10
-#define UART3_RX_PINSOURCE  GPIO_PinSource11
+#define UART3_TX_PIN            PB10
+#define UART3_RX_PIN            PB11
 
-#define USE_I2C
-#define I2C_DEVICE (I2CDEV_2)
+#undef USE_I2C
 
 #define USE_ADC
-#define BOARD_HAS_VOLTAGE_DIVIDER
+#define ADC_INSTANCE            ADC1
+#define VBAT_ADC_PIN            PC0
+#define CURRENT_METER_ADC_PIN   PC1
+#define RSSI_ADC_PIN            PC2
+#define EXTERNAL1_ADC_PIN       PC3
 
-#define ADC_INSTANCE                ADC1
-#define ADC_AHB_PERIPHERAL          RCC_AHBPeriph_DMA1
-#define ADC_DMA_CHANNEL             DMA1_Channel1
+#define DEFAULT_RX_FEATURE      FEATURE_RX_SERIAL
+#define SERIALRX_PROVIDER       SERIALRX_SBUS
+#define SERIALRX_UART           SERIAL_PORT_USART2
+#define SBUS_TELEMETRY_UART     SERIAL_PORT_USART1
 
-#define ADC0_GPIO                   GPIOC
-#define ADC0_GPIO_PIN               GPIO_Pin_0
-#define ADC0_CHANNEL                ADC_Channel_6
+#ifdef LUXV2_RACE
+#define ENABLE_BLACKBOX_LOGGING_ON_SDCARD_BY_DEFAULT
+#define DEFAULT_FEATURES        (FEATURE_TELEMETRY)
+#else
+#define DEFAULT_FEATURES        (FEATURE_TELEMETRY)
+#endif
 
-#define ADC1_GPIO                   GPIOC
-#define ADC1_GPIO_PIN               GPIO_Pin_1
-#define ADC1_CHANNEL                ADC_Channel_7
-
-#define ADC2_GPIO                   GPIOC
-#define ADC2_GPIO_PIN               GPIO_Pin_2
-#define ADC2_CHANNEL                ADC_Channel_8
-
-#define ADC3_GPIO                   GPIOC
-#define ADC3_GPIO_PIN               GPIO_Pin_3
-#define ADC3_CHANNEL                ADC_Channel_9
-
-#define ADC_CHANNEL_COUNT 4
-
-#define ADC_BATTERY     ADC_CHANNEL0
-#define ADC_AMPERAGE     ADC_CHANNEL1
-#define ADC_RSSI        ADC_CHANNEL2
-#define ADC_EXTERNAL    ADC_CHANNEL3
-
-#define DEFAULT_RX_FEATURE FEATURE_RX_PPM
-
-#define BLACKBOX
-#define GPS
-#define GTUNE
-#define LED_STRIP
-
-#define LED_STRIP_TIMER TIM16
-
-#define WS2811_GPIO                     GPIOA
-#define WS2811_GPIO_AHB_PERIPHERAL      RCC_AHBPeriph_GPIOA
-#define WS2811_GPIO_AF                  GPIO_AF_1
-#define WS2811_PIN                      GPIO_Pin_6 // TIM16_CH1
-#define WS2811_PIN_SOURCE               GPIO_PinSource6
-#define WS2811_TIMER                    TIM16
-#define WS2811_TIMER_APB2_PERIPHERAL    RCC_APB2Periph_TIM16
-#define WS2811_DMA_CHANNEL              DMA1_Channel3
-#define WS2811_IRQ                      DMA1_Channel3_IRQn
-#define WS2811_DMA_TC_FLAG              DMA1_FLAG_TC3
-#define WS2811_DMA_HANDLER_IDENTIFER    DMA1Channel3Descriptor
-
-
-// MPU6500 interrupt
-//#define DEBUG_MPU_DATA_READY_INTERRUPT
-#define USE_MPU_DATA_READY_SIGNAL
-#define ENSURE_MPU_DATA_READY_IS_LOW
-
-#define TELEMETRY
-#define TELEMETRY_IBUS
-#define SERIAL_RX
-#define USE_SERVOS
-#define USE_CLI
-#define USE_EXTI
-
-#define SPEKTRUM_BIND
-// USART1, PC5
-#define BIND_PORT  GPIOC
-#define BIND_PIN   Pin_5
+#define SPEKTRUM_BIND_PIN       UART1_RX_PIN
 
 #define USE_SERIAL_4WAY_BLHELI_INTERFACE
 
+#define USE_ESCSERIAL
+#define ESCSERIAL_TIMER_TX_HARDWARE 0 // PWM 1
+
 // IO - assuming 303 in 64pin package, TODO
-#define TARGET_IO_PORTA 0xffff
-#define TARGET_IO_PORTB 0xffff
-#define TARGET_IO_PORTC 0xffff
-#define TARGET_IO_PORTD (BIT(2))
-#define TARGET_IO_PORTF (BIT(0)|BIT(1)|BIT(4))
+#define TARGET_IO_PORTA         0xffff
+#define TARGET_IO_PORTB         0xffff
+#define TARGET_IO_PORTC         0xffff
+#define TARGET_IO_PORTD         (BIT(2))
+#define TARGET_IO_PORTF         (BIT(0)|BIT(1)|BIT(4))
+
+#ifdef LUXV2_RACE
+#define USABLE_TIMER_CHANNEL_COUNT 6
+#else
+#define USABLE_TIMER_CHANNEL_COUNT 12
+#endif
+#define USED_TIMERS             (TIM_N(1) | TIM_N(2) | TIM_N(3) | TIM_N(8) | TIM_N(15))

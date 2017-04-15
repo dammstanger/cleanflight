@@ -17,76 +17,7 @@
 
 #pragma once
 
-typedef enum {
-    /* Actual tasks */
-    TASK_SYSTEM = 0,
-    TASK_GYRO,
-    TASK_PID,
-    TASK_ACCEL,
-    TASK_ATTITUDE,
-    TASK_RX,
-    TASK_SERIAL,
-    TASK_BATTERY,
-    TASK_HARDWARE_WATCHDOG,
-#ifdef BEEPER
-    TASK_BEEPER,
-#endif
-#ifdef GPS
-    TASK_GPS,
-#endif
-#ifdef MAG
-    TASK_COMPASS,
-#endif
-#ifdef BARO
-    TASK_BARO,
-#endif
-#ifdef SONAR
-    TASK_SONAR,
-#endif
-#if defined(BARO) || defined(SONAR)
-    TASK_ALTITUDE,
-#endif
-#ifdef DISPLAY
-    TASK_DISPLAY,
-#endif
-#ifdef TELEMETRY
-    TASK_TELEMETRY,
-#endif
-#ifdef LED_STRIP
-    TASK_LEDSTRIP,
-#endif
-#ifdef TRANSPONDER
-    TASK_TRANSPONDER,
-#endif
-#ifdef OSD
-    TASK_DRAW_SCREEN,
-#endif
+#define LOOPTIME_SUSPEND_TIME 3  // Prevent too long busy wait times
 
-    /* Count of real tasks */
-    TASK_COUNT
-} cfTaskId_e;
-
-void taskSystem(void);
-bool taskGyroCheck(uint32_t currentDeltaTime);
-void taskGyro(void);
-bool taskPidCheck(uint32_t currentDeltaTime);
-void taskPid(void);
-void taskUpdateAccelerometer(void);
-void taskUpdateAttitude(void);
-bool taskUpdateRxCheck(uint32_t currentDeltaTime);
-void taskUpdateRxMain(void);
-void taskHandleSerial(void);
-void taskHardwareWatchdog(void);
-void taskUpdateBeeper(void);
-void taskUpdateBattery(void);
-void taskUpdateRxMain(void);
-void taskProcessGPS(void);
-void taskUpdateCompass(void);
-void taskUpdateBaro(void);
-void taskUpdateSonar(void);
-void taskCalculateAltitude(void);
-void taskUpdateDisplay(void);
-void taskTelemetry(void);
-void taskLedStrip(void);
-void taskTransponder(void);
-void taskDrawScreen(void);
+void fcTasksInit(void);
+void osdSlaveTasksInit(void);

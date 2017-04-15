@@ -17,50 +17,123 @@
 
 #pragma once
 
-typedef struct dmaCallbackHandler_s dmaCallbackHandler_t;
-typedef struct dmaChannel_s dmaChannel_t;
+#include "resource.h"
 
-typedef void dmaCallbackHandlerFunc(dmaChannel_t* descriptor, dmaCallbackHandler_t* callbackHandler);
+struct dmaChannelDescriptor_s;
+typedef void (*dmaCallbackHandlerFuncPtr)(struct dmaChannelDescriptor_s *channelDescriptor);
 
-struct dmaCallbackHandler_s {
-    dmaCallbackHandlerFunc*  fn;
-    dmaCallbackHandler_t*       next;
-};
+typedef struct dmaChannelDescriptor_s {
+    DMA_TypeDef*                dma;
+#if defined(STM32F4) || defined(STM32F7)
+    DMA_Stream_TypeDef*         ref;
+#else
+    DMA_Channel_TypeDef*        ref;
+#endif
+    dmaCallbackHandlerFuncPtr   irqHandlerCallback;
+    uint8_t                     flagsShift;
+    IRQn_Type                   irqN;
+    uint32_t                    rcc;
+    uint32_t                    userParam;
+    resourceOwner_e             owner;
+    uint8_t                     resourceIndex;
+} dmaChannelDescriptor_t;
 
-#define DMA1Channel1Descriptor  (&dmaChannels[0])
-#define DMA1Channel2Descriptor  (&dmaChannels[1])
-#define DMA1Channel3Descriptor  (&dmaChannels[2])
-#define DMA1Channel4Descriptor  (&dmaChannels[3])
-#define DMA1Channel5Descriptor  (&dmaChannels[4])
-#define DMA1Channel6Descriptor  (&dmaChannels[5])
-#define DMA1Channel7Descriptor  (&dmaChannels[6])
-#if defined(STM32F303xC) || defined(STM32F10X_CL)
-#define DMA2Channel1Descriptor  (&dmaChannels[7])
-#define DMA2Channel2Descriptor  (&dmaChannels[8])
-#define DMA2Channel3Descriptor  (&dmaChannels[9])
-#define DMA2Channel4Descriptor  (&dmaChannels[10])
-#define DMA2Channel5Descriptor  (&dmaChannels[11])
+#if defined(STM32F7)
+//#define HAL_CLEANINVALIDATECACHE(addr, size) (SCB_CleanInvalidateDCache_by_Addr((uint32_t*)((uint32_t)addr & ~0x1f), ((uint32_t)(addr + size + 0x1f) & ~0x1f) - ((uint32_t)addr & ~0x1f)))
+//#define HAL_CLEANCACHE(addr, size) (SCB_CleanDCache_by_Addr((uint32_t*)((uint32_t)addr & ~0x1f), ((uint32_t)(addr + size + 0x1f) & ~0x1f) - ((uint32_t)addr & ~0x1f)))
 #endif
 
-struct dmaChannel_s {
-    DMA_TypeDef*                dma;
-    DMA_Channel_TypeDef*        channel;
-    dmaCallbackHandler_t*       handler;
-    uint8_t                     flagsShift;
-    IRQn_Type                   irqn;
-    uint32_t                    rcc;
-};
+#if defined(STM32F4) || defined(STM32F7)
+uint32_t dmaFlag_IT_TCIF(const DMA_Stream_TypeDef *stream);
 
-extern dmaChannel_t dmaChannels[];
+typedef enum {
+    DMA1_ST0_HANDLER = 0,
+    DMA1_ST1_HANDLER,
+    DMA1_ST2_HANDLER,
+    DMA1_ST3_HANDLER,
+    DMA1_ST4_HANDLER,
+    DMA1_ST5_HANDLER,
+    DMA1_ST6_HANDLER,
+    DMA1_ST7_HANDLER,
+    DMA2_ST0_HANDLER,
+    DMA2_ST1_HANDLER,
+    DMA2_ST2_HANDLER,
+    DMA2_ST3_HANDLER,
+    DMA2_ST4_HANDLER,
+    DMA2_ST5_HANDLER,
+    DMA2_ST6_HANDLER,
+    DMA2_ST7_HANDLER,
+    DMA_MAX_DESCRIPTORS
+} dmaIdentifier_e;
 
-#define DMA_CLEAR_FLAG(d, flag) d->dma->IFCR |= (flag << d->flagsShift)
+#define DMA_MOD_VALUE       8
+#define DMA_MOD_OFFSET      0
+#define DMA_OUTPUT_INDEX    0
+#define DMA_OUTPUT_STRING   "DMA%d Stream %d:"
+
+#define DEFINE_DMA_CHANNEL(d, s, f, i, r) {.dma = d, .ref = s, .irqHandlerCallback = NULL, .flagsShift = f, .irqN = i, .rcc = r, .userParam = 0, .owner = 0, .resourceIndex = 0 }
+#define DEFINE_DMA_IRQ_HANDLER(d, s, i) void DMA ## d ## _Stream ## s ## _IRQHandler(void) {\
+                                                                if (dmaDescriptors[i].irqHandlerCallback)\
+                                                                    dmaDescriptors[i].irqHandlerCallback(&dmaDescriptors[i]);\
+                                                            }
+
+#define DMA_CLEAR_FLAG(d, flag) if(d->flagsShift > 31) d->dma->HIFCR = (flag << (d->flagsShift - 32)); else d->dma->LIFCR = (flag << d->flagsShift)
+#define DMA_GET_FLAG_STATUS(d, flag) (d->flagsShift > 31 ? d->dma->HISR & (flag << (d->flagsShift - 32)): d->dma->LISR & (flag << d->flagsShift))
+
+
+#define DMA_IT_TCIF         ((uint32_t)0x00000020)
+#define DMA_IT_HTIF         ((uint32_t)0x00000010)
+#define DMA_IT_TEIF         ((uint32_t)0x00000008)
+#define DMA_IT_DMEIF        ((uint32_t)0x00000004)
+#define DMA_IT_FEIF         ((uint32_t)0x00000001)
+
+dmaIdentifier_e dmaGetIdentifier(const DMA_Stream_TypeDef* stream);
+dmaChannelDescriptor_t* getDmaDescriptor(const DMA_Stream_TypeDef* stream);
+
+#else
+
+typedef enum {
+    DMA1_CH1_HANDLER = 0,
+    DMA1_CH2_HANDLER,
+    DMA1_CH3_HANDLER,
+    DMA1_CH4_HANDLER,
+    DMA1_CH5_HANDLER,
+    DMA1_CH6_HANDLER,
+    DMA1_CH7_HANDLER,
+#if defined(STM32F3) || defined(STM32F10X_CL)
+    DMA2_CH1_HANDLER,
+    DMA2_CH2_HANDLER,
+    DMA2_CH3_HANDLER,
+    DMA2_CH4_HANDLER,
+    DMA2_CH5_HANDLER,
+#endif
+    DMA_MAX_DESCRIPTORS
+} dmaIdentifier_e;
+
+#define DMA_MOD_VALUE       7
+#define DMA_MOD_OFFSET      1
+#define DMA_OUTPUT_INDEX    0
+#define DMA_OUTPUT_STRING   "DMA%d Channel %d:"
+
+#define DEFINE_DMA_CHANNEL(d, c, f, i, r) {.dma = d, .ref = c, .irqHandlerCallback = NULL, .flagsShift = f, .irqN = i, .rcc = r, .userParam = 0, .owner = 0, .resourceIndex = 0 }
+#define DEFINE_DMA_IRQ_HANDLER(d, c, i) void DMA ## d ## _Channel ## c ## _IRQHandler(void) {\
+                                                                        if (dmaDescriptors[i].irqHandlerCallback)\
+                                                                            dmaDescriptors[i].irqHandlerCallback(&dmaDescriptors[i]);\
+                                                                    }
+
+#define DMA_CLEAR_FLAG(d, flag) d->dma->IFCR = (flag << d->flagsShift)
 #define DMA_GET_FLAG_STATUS(d, flag) (d->dma->ISR & (flag << d->flagsShift))
 
-#define DMA_IT_TCIF                          ((uint32_t)0x00000002)
-#define DMA_IT_HTIF                          ((uint32_t)0x00000004)
-#define DMA_IT_TEIF                          ((uint32_t)0x00000008)
+#define DMA_IT_TCIF         ((uint32_t)0x00000002)
+#define DMA_IT_HTIF         ((uint32_t)0x00000004)
+#define DMA_IT_TEIF         ((uint32_t)0x00000008)
 
-void dmaInit(void);
-void dmaHandlerInit(dmaCallbackHandler_t* handlerRec, dmaCallbackHandlerFunc* handler);
-void dmaSetHandler(dmaChannel_t* dmaChannel, dmaCallbackHandler_t* handler, uint8_t priority);
+dmaIdentifier_e dmaGetIdentifier(const DMA_Channel_TypeDef* channel);
 
+#endif
+
+void dmaInit(dmaIdentifier_e identifier, resourceOwner_e owner, uint8_t resourceIndex);
+void dmaSetHandler(dmaIdentifier_e identifier, dmaCallbackHandlerFuncPtr callback, uint32_t priority, uint32_t userParam);
+
+resourceOwner_e dmaGetOwner(dmaIdentifier_e identifier);
+uint8_t dmaGetResourceIndex(dmaIdentifier_e identifier);

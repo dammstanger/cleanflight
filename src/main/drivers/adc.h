@@ -17,44 +17,35 @@
 
 #pragma once
 
-typedef enum {
-    ADC_CHANNEL0_ENABLE = (1 << 0),
-    ADC_CHANNEL1_ENABLE = (1 << 1),
-    ADC_CHANNEL2_ENABLE = (1 << 2),
-    ADC_CHANNEL3_ENABLE = (1 << 3),
-    ADC_CHANNEL4_ENABLE = (1 << 4),
-    ADC_CHANNEL5_ENABLE = (1 << 5),
-} adcChannelEnableMask_e;
-
-#ifndef ADC_CHANNEL_COUNT
-#define ADC_CHANNEL_COUNT 4
-#endif
+#include "io_types.h"
 
 typedef enum {
-    ADC_CHANNEL0 = 0,
-    ADC_CHANNEL1 = 1,
-    ADC_CHANNEL2 = 2,
-    ADC_CHANNEL3 = 3,
-#if ADC_CHANNEL_COUNT > 4
-    ADC_CHANNEL4 = 4,
-#endif
-#if ADC_CHANNEL_COUNT > 5
-    ADC_CHANNEL5 = 5,
-#endif
-} adcChannelIndex_e;
-
-#define ADC_CHANNEL_MASK(adcChannel) (1 << adcChannel)
+    ADC_BATTERY = 0,
+    ADC_CURRENT = 1,
+    ADC_EXTERNAL1 = 2,
+    ADC_RSSI = 3,
+    ADC_CHANNEL_COUNT
+} AdcChannel;
 
 typedef struct adc_config_s {
+    ioTag_t tag;
     uint8_t adcChannel;         // ADC1_INxx channel number
     uint8_t dmaIndex;           // index into DMA buffer in case of sparse channels
     bool enabled;
     uint8_t sampleTime;
-} adc_config_t;
+} adcOperatingConfig_t;
 
-typedef struct drv_adc_config_s {
-    uint32_t channelMask;
-} drv_adc_config_t;
+typedef struct adcChannelConfig_t {
+    bool enabled;
+    ioTag_t ioTag;
+} adcChannelConfig_t;
 
-void adcInit(drv_adc_config_t *init);
+typedef struct adcConfig_s {
+    adcChannelConfig_t vbat;
+    adcChannelConfig_t rssi;
+    adcChannelConfig_t current;
+    adcChannelConfig_t external1;
+} adcConfig_t;
+
+void adcInit(const adcConfig_t *config);
 uint16_t adcGetChannel(uint8_t channel);

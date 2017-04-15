@@ -17,6 +17,15 @@
 
 #pragma once
 
+#include "exti.h"
+#include "sensor.h"
+
+//#define DEBUG_MPU_DATA_READY_INTERRUPT
+
+#if defined(USE_GYRO_SPI_MPU6500) || defined(USE_GYRO_SPI_MPU6000) ||  defined(USE_GYRO_SPI_MPU9250) || defined(USE_GYRO_SPI_ICM20689)
+#define GYRO_USES_SPI
+#endif
+
 // MPU6050
 #define MPU_RA_WHO_AM_I         0x75
 #define MPU_RA_WHO_AM_I_LEGACY  0x00
@@ -112,37 +121,24 @@
 #define MPU_RA_FIFO_R_W         0x74
 #define MPU_RA_WHO_AM_I         0x75
 
-#define MPU_INQUIRY_MASK   0x7E
-
-// WHO_AM_I register contents for MPU3050, 6050 and 6500
-#define MPU6500_WHO_AM_I_CONST              (0x70)
-#define MPUx0x0_WHO_AM_I_CONST              (0x68)
-
 // RF = Register Flag
 #define MPU_RF_DATA_RDY_EN (1 << 0)
 
-typedef bool (*mpuReadRegisterFunc)(uint8_t reg, uint8_t length, uint8_t* data);
-typedef bool (*mpuWriteRegisterFunc)(uint8_t reg, uint8_t data);
+typedef bool (*mpuReadRegisterFnPtr)(const busDevice_t *bus, uint8_t reg, uint8_t length, uint8_t* data);
+typedef bool (*mpuWriteRegisterFnPtr)(const busDevice_t *bus, uint8_t reg, uint8_t data);
+typedef void(*mpuResetFnPtr)(void);
+
+extern mpuResetFnPtr mpuResetFn;
 
 typedef struct mpuConfiguration_s {
+    mpuReadRegisterFnPtr readFn;
+    mpuWriteRegisterFnPtr writeFn;
+    mpuReadRegisterFnPtr slowreadFn;
+    mpuWriteRegisterFnPtr verifywriteFn;
+    mpuResetFnPtr resetFn;
     uint8_t gyroReadXRegister; // Y and Z must registers follow this, 2 words each
-    mpuReadRegisterFunc read;
-    mpuWriteRegisterFunc write;
 } mpuConfiguration_t;
 
-extern mpuConfiguration_t mpuConfiguration;
-
-enum lpf_e {
-    INV_FILTER_256HZ_NOLPF2 = 0,
-    INV_FILTER_188HZ,
-    INV_FILTER_98HZ,
-    INV_FILTER_42HZ,
-    INV_FILTER_20HZ,
-    INV_FILTER_10HZ,
-    INV_FILTER_5HZ,
-    INV_FILTER_2100HZ_NOLPF,
-    NUM_FILTER
-};
 enum gyro_fsr_e {
     INV_FSR_250DPS = 0,
     INV_FSR_500DPS,
@@ -150,11 +146,19 @@ enum gyro_fsr_e {
     INV_FSR_2000DPS,
     NUM_GYRO_FSR
 };
+
+enum fchoice_b {
+    FCB_DISABLED = 0,
+    FCB_8800_32,
+    FCB_3600_32
+};
+
 enum clock_sel_e {
     INV_CLK_INTERNAL = 0,
     INV_CLK_PLL,
     NUM_CLK
 };
+
 enum accel_fsr_e {
     INV_FSR_2G = 0,
     INV_FSR_4G,
@@ -169,8 +173,14 @@ typedef enum {
     MPU_60x0,
     MPU_60x0_SPI,
     MPU_65xx_I2C,
-    MPU_65xx_SPI
-} detectedMPUSensor_e;
+    MPU_65xx_SPI,
+    MPU_9250_SPI,
+    ICM_20601_SPI,
+    ICM_20602_SPI,
+    ICM_20608_SPI,
+    ICM_20689_SPI,
+    BMI_160_SPI,
+} mpuSensor_e;
 
 typedef enum {
     MPU_HALF_RESOLUTION,
@@ -178,15 +188,19 @@ typedef enum {
 } mpu6050Resolution_e;
 
 typedef struct mpuDetectionResult_s {
-    detectedMPUSensor_e sensor;
+    mpuSensor_e sensor;
     mpu6050Resolution_e resolution;
 } mpuDetectionResult_t;
 
-extern mpuDetectionResult_t mpuDetectionResult;
+bool mpuReadRegisterI2C(const busDevice_t *bus, uint8_t reg, uint8_t length, uint8_t* data);
+bool mpuWriteRegisterI2C(const busDevice_t *bus, uint8_t reg, uint8_t data);
 
-void configureMPUDataReadyInterruptHandling(void);
-void mpuIntExtiInit(void);
-bool mpuAccRead(int16_t *accData);
-bool mpuGyroRead(int16_t *gyroADC);
-mpuDetectionResult_t *detectMpu(const extiConfig_t *configToUse);
+struct gyroDev_s;
+void mpuGyroInit(struct gyroDev_s *gyro);
+struct accDev_s;
+bool mpuAccRead(struct accDev_s *acc);
+bool mpuGyroRead(struct gyroDev_s *gyro);
+void mpuDetect(struct gyroDev_s *gyro);
+bool mpuCheckDataReady(struct gyroDev_s *gyro);
+void mpuGyroSetIsrUpdate(struct gyroDev_s *gyro, sensorGyroUpdateFuncPtr updateFn);
 

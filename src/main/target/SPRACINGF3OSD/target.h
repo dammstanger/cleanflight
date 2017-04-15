@@ -18,127 +18,84 @@
 #pragma once
 
 #define TARGET_BOARD_IDENTIFIER "SOF3"
+#define TARGET_CONFIG
 
-#define LED0_GPIO   GPIOA
-#define LED0_PIN    Pin_15 // PBA15 (LED)
-#define LED0_PERIPHERAL RCC_AHBPeriph_GPIOA
+#define CONFIG_FASTLOOP_PREFERRED_ACC ACC_DEFAULT
 
-// FIXME The board has a bus switch, not LED1
-#define LED1_GPIO   GPIOB
-#define LED1_PIN    Pin_3 // PB3
-#define LED1_PERIPHERAL RCC_AHBPeriph_GPIOB
-
-#define USE_SPI
-#define USE_SPI_DEVICE_1
-#define USE_SPI_DEVICE_2
-
-#define SPI1_CS_GPIO      GPIOA
-#define SPI1_CS_PIN       GPIO_Pin_4
-
-#define SPI2_CS_GPIO      GPIOB
-#define SPI2_CS_PIN       GPIO_Pin_12
-
-#define M25P16_CS_GPIO        SPI1_CS_GPIO
-#define M25P16_CS_PIN         SPI1_CS_PIN
-#define M25P16_SPI_INSTANCE   SPI1
-
-#define MAX7456_CS_GPIO        SPI2_CS_GPIO
-#define MAX7456_CS_PIN         SPI2_CS_PIN
-#define MAX7456_SPI_INSTANCE   SPI2
-
-#define MAX7456_DMA_CHANNEL_TX              DMA1_Channel5
-#define MAX7456_DMA_CHANNEL_RX              DMA1_Channel4
-#define MAX7456_DMA_IRQ_HANDLER_ID          DMA1Channel4Descriptor
-
-#define MAX7456_NRST_GPIO_PERIPHERAL    RCC_AHBPeriph_GPIOB
-#define MAX7456_NRST_GPIO               GPIOB
-#define MAX7456_NRST_PIN                Pin_2
-
-#define MAX7456_LOS_IO                  PC13
-#define MAX7456_VSYNC_IO                PC14
-#define MAX7456_HSYNC_IO                PC15
-
-#define EXTI_CALLBACK_HANDLER_COUNT 3 // LOS, HSYNC, VSYNC
-
-#define USE_FLASHFS
-#define USE_FLASHTOOLS
-#define USE_FLASH_M25P16
-
-#define LED0
-#define LED1
-
-#define USB_IO
-
-#define USE_VCP
-#define USE_UART1
-#define USE_UART2
-#define SERIAL_PORT_COUNT 3
-
-#define UART1_TX_PIN        GPIO_Pin_9  // PA9
-#define UART1_RX_PIN        GPIO_Pin_10 // PA10
-#define UART1_GPIO          GPIOA
-#define UART1_GPIO_AF       GPIO_AF_7
-#define UART1_TX_PINSOURCE  GPIO_PinSource9
-#define UART1_RX_PINSOURCE  GPIO_PinSource10
-
-#define USE_MSP_CLIENT
+#define LED0                    PA15
 
 #define USE_EXTI
 
+
+#define GYRO
+#define USE_FAKE_GYRO
+
+#define ACC
+#define USE_FAKE_ACC
+
+#define REMAP_TIM16_DMA
+#define REMAP_TIM17_DMA
+
+#define USE_VCP
+#define USE_UART1
+#define USE_UART3
+#define SERIAL_PORT_COUNT       3
+
+#define UART1_TX_PIN            PA9
+#define UART1_RX_PIN            PA10
+
+#define BUS_SWITCH_PIN          PB3 // connects and disconnects UART1 from external devices
+
+#define UART3_TX_PIN            PB10
+#define UART3_RX_PIN            PB11
+
+#define USE_I2C
+#define USE_I2C_DEVICE_1
+#define I2C_DEVICE              (I2CDEV_1)
+
+#define USE_SPI
+#define USE_SPI_DEVICE_1 // Flash Chip
+#define USE_SPI_DEVICE_2 // MAX7456
+
+#define SPI1_NSS_PIN            PA4
+#define SPI1_SCK_PIN            PA5
+#define SPI1_MISO_PIN           PA6
+#define SPI1_MOSI_PIN           PA7
+
+#define SPI2_NSS_PIN            PB12
+#define SPI2_SCK_PIN            PB13
+#define SPI2_MISO_PIN           PB14
+#define SPI2_MOSI_PIN           PB15
+
+#define USE_MAX7456
+#define MAX7456_SPI_INSTANCE    SPI2
+#define MAX7456_SPI_CS_PIN      SPI2_NSS_PIN
+#define MAX7456_NRST_PIN        PB2
+
+#define MAX7456_DMA_CHANNEL_TX              DMA1_Channel5
+#define MAX7456_DMA_CHANNEL_RX              DMA1_Channel4
+#define MAX7456_DMA_IRQ_HANDLER_ID          DMA1_CH4_HANDLER
+
+#define BOARD_HAS_VOLTAGE_DIVIDER
+#define BOARD_HAS_CURRENT_SENSOR
+
 #define USE_ADC
-
-#define ADC_INSTANCE                ADC1
-#define ADC_AHB_PERIPHERAL          RCC_AHBPeriph_DMA1
-#define ADC_DMA_CHANNEL             DMA1_Channel1
-
-// 12v
-#define ADC0_GPIO               GPIOA
-#define ADC0_GPIO_PIN           GPIO_Pin_0
-#define ADC0_CHANNEL            ADC_Channel_1
-
-// 5v
-#define ADC1_GPIO               GPIOA
-#define ADC1_GPIO_PIN           GPIO_Pin_1
-#define ADC1_CHANNEL            ADC_Channel_2
-
-// vbat
-#define ADC2_GPIO               GPIOA
-#define ADC2_GPIO_PIN           GPIO_Pin_2
-#define ADC2_CHANNEL            ADC_Channel_3
-
-// amperage
-#define ADC3_GPIO               GPIOA
-#define ADC3_GPIO_PIN           GPIO_Pin_3
-#define ADC3_CHANNEL            ADC_Channel_4
-
-// adc channel mapping
-#define ADC_CHANNEL_COUNT 4
-#define ADC_POWER_12V ADC_CHANNEL0
-#define ADC_POWER_5V ADC_CHANNEL1
-#define ADC_BATTERY ADC_CHANNEL2
-#define ADC_AMPERAGE ADC_CHANNEL3
-
-#define MAX_VOLTAGE_METERS 3
-
-#define BOARD_HAS_AMPERAGE_METER
+#define ADC_INSTANCE            ADC1
+#define VBAT_ADC_PIN            PA2
+#define CURRENT_METER_ADC_PIN   PA3
+#define VOLTAGE_12V_ADC_PIN     PA0
+#define VOLTAGE_5V_ADC_PIN      PA1
 
 #define TRANSPONDER
-#define TRANSPONDER_GPIO                     GPIOA
-#define TRANSPONDER_GPIO_AHB_PERIPHERAL      RCC_AHBPeriph_GPIOA
-#define TRANSPONDER_GPIO_AF                  GPIO_AF_6
-#define TRANSPONDER_PIN                      GPIO_Pin_8
-#define TRANSPONDER_PIN_SOURCE               GPIO_PinSource8
-#define TRANSPONDER_TIMER                    TIM1
-#define TRANSPONDER_TIMER_APB2_PERIPHERAL    RCC_APB2Periph_TIM1
-#define TRANSPONDER_DMA_CHANNEL              DMA1_Channel2
-#define TRANSPONDER_IRQ                      DMA1_Channel2_IRQn
-#define TRANSPONDER_DMA_TC_FLAG              DMA1_FLAG_TC2
-#define TRANSPONDER_DMA_HANDLER_IDENTIFER    DMA1Channel2Descriptor
 
-#define DEFAULT_FEATURES FEATURE_TRANSPONDER
+#define DEFAULT_FEATURES        (FEATURE_TRANSPONDER)
 
-// IO - stm32f303cc in 48pin package
+// IO - assuming 303 in 64pin package, TODO
 #define TARGET_IO_PORTA 0xffff
 #define TARGET_IO_PORTB 0xffff
-#define TARGET_IO_PORTC (BIT(13)|BIT(14)|BIT(15))
-#define TARGET_IO_PORTF (BIT(0)|BIT(1))
+#define TARGET_IO_PORTC 0xffff
+#define TARGET_IO_PORTD (BIT(2))
+#define TARGET_IO_PORTF (BIT(0)|BIT(1)|BIT(4))
+
+#define USABLE_TIMER_CHANNEL_COUNT 12 // 2xPPM, 6xPWM, UART3 RX/TX, LED Strip, IR.
+#define USED_TIMERS  (TIM_N(1) | TIM_N(2) | TIM_N(3) | TIM_N(8) | TIM_N(15) | TIM_N(16))

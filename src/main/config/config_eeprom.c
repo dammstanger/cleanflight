@@ -14,28 +14,27 @@
  * You should have received a copy of the GNU General Public License
  * along with Cleanflight.  If not, see <http://www.gnu.org/licenses/>.
  */
+
 #include <stdbool.h>
 #include <stdint.h>
 #include <string.h>
-#include <stddef.h>
 
-#include <platform.h>
+#include "platform.h"
 
 #include "build/build_config.h"
 
-#include "config/parameter_group.h"
-#include "config/config_streamer.h"
-#include "config/profile.h"
-
 #include "common/maths.h"
+
+#include "config/config_eeprom.h"
+#include "config/config_streamer.h"
+#include "config/parameter_group.h"
 
 #include "drivers/system.h"
 
-
-static const uint8_t EEPROM_CONF_VERSION = 112;
-
 extern uint8_t __config_start;   // configured via linker script when building binaries.
 extern uint8_t __config_end;
+
+static uint16_t eepromConfigSize;
 
 typedef enum {
     CR_CLASSICATION_SYSTEM   = 0,
@@ -45,11 +44,15 @@ typedef enum {
     CR_CLASSICATION_PROFILE_LAST = CR_CLASSICATION_PROFILE3,
 } configRecordFlags_e;
 
-#define CR_CLASSIFICATION_MASK (0x3)
+#define CR_CLASSIFICATION_MASK  (0x3)
+#define CRC_START_VALUE         0xFFFF
+#define CRC_CHECK_VALUE         0x1D0F  // pre-calculated value of CRC that includes the CRC itself
 
 // Header for the saved copy.
 typedef struct {
-    uint8_t format;
+    uint8_t eepromConfigVersion;
+    uint8_t magic_be;           // magic number, should be 0xBE
+    char boardIdentifier[sizeof(TARGET_BOARD_IDENTIFIER)];
 } PG_PACKED configHeader_t;
 
 // Header for each stored PG.
@@ -84,33 +87,29 @@ void initEEPROM(void)
     BUILD_BUG_ON(offsetof(packingTest_t, word) != 1);
     BUILD_BUG_ON(sizeof(packingTest_t) != 5);
 
-    BUILD_BUG_ON(sizeof(configHeader_t) != 1);
+    BUILD_BUG_ON(sizeof(configHeader_t) != 2 + sizeof(TARGET_BOARD_IDENTIFIER));
     BUILD_BUG_ON(sizeof(configFooter_t) != 2);
     BUILD_BUG_ON(sizeof(configRecord_t) != 6);
 }
 
-static uint8_t updateChecksum(uint8_t chk, const void *data, uint32_t length)
-{
-    const uint8_t *p = (const uint8_t *)data;
-    const uint8_t *pend = p + length;
-
-    for (; p != pend; p++) {
-        chk ^= *p;
-    }
-    return chk;
-}
-
 // Scan the EEPROM config. Returns true if the config is valid.
-bool scanEEPROM(void)
+bool isEEPROMContentValid(void)
 {
-    uint8_t chk = 0;
     const uint8_t *p = &__config_start;
     const configHeader_t *header = (const configHeader_t *)p;
 
-    if (header->format != EEPROM_CONF_VERSION) {
+    if (header->eepromConfigVersion != EEPROM_CONF_VERSION) {
         return false;
     }
-    chk = updateChecksum(chk, header, sizeof(*header));
+    if (header->magic_be != 0xBE) {
+        return false;
+    }
+    if (strncasecmp(header->boardIdentifier, TARGET_BOARD_IDENTIFIER, sizeof(TARGET_BOARD_IDENTIFIER))) {
+        return false;
+    }
+
+    uint16_t crc = CRC_START_VALUE;
+    crc = crc16_ccitt_update(crc, header, sizeof(*header));
     p += sizeof(*header);
 
     for (;;) {
@@ -126,22 +125,35 @@ bool scanEEPROM(void)
             return false;
         }
 
-        chk = updateChecksum(chk, p, record->size);
+        crc = crc16_ccitt_update(crc, p, record->size);
 
         p += record->size;
     }
 
     const configFooter_t *footer = (const configFooter_t *)p;
-    chk = updateChecksum(chk, footer, sizeof(*footer));
+    crc = crc16_ccitt_update(crc, footer, sizeof(*footer));
     p += sizeof(*footer);
-    chk = ~chk;
-    return chk == *p;
+
+    // include stored CRC in the CRC calculation
+    const uint16_t *storedCrc = (const uint16_t *)p;
+    crc = crc16_ccitt_update(crc, storedCrc, sizeof(*storedCrc));
+    p += sizeof(storedCrc);
+
+    eepromConfigSize = p - &__config_start;
+
+    // CRC has the property that if the CRC itself is included in the calculation the resulting CRC will have constant value
+    return crc == CRC_CHECK_VALUE;
+}
+
+uint16_t getEEPROMConfigSize(void)
+{
+    return eepromConfigSize;
 }
 
 // find config record for reg + classification (profile info) in EEPROM
 // return NULL when record is not found
 // this function assumes that EEPROM content is valid
-const configRecord_t *findEEPROM(const pgRegistry_t *reg, configRecordFlags_e classification)
+static const configRecord_t *findEEPROM(const pgRegistry_t *reg, configRecordFlags_e classification)
 {
     const uint8_t *p = &__config_start;
     p += sizeof(configHeader_t);             // skip header
@@ -188,25 +200,22 @@ bool loadEEPROM(void)
     return true;
 }
 
-bool isEEPROMContentValid(void)
-{
-    return scanEEPROM();
-}
-
 static bool writeSettingsToEEPROM(void)
 {
     config_streamer_t streamer;
     config_streamer_init(&streamer);
 
     config_streamer_start(&streamer, (uintptr_t)&__config_start, &__config_end - &__config_start);
-    uint8_t chk = 0;
 
     configHeader_t header = {
-        .format = EEPROM_CONF_VERSION,
+        .eepromConfigVersion =  EEPROM_CONF_VERSION,
+        .magic_be =             0xBE,
+        .boardIdentifier =      TARGET_BOARD_IDENTIFIER,
     };
 
     config_streamer_write(&streamer, (uint8_t *)&header, sizeof(header));
-    chk = updateChecksum(chk, (uint8_t *)&header, sizeof(header));
+    uint16_t crc = CRC_START_VALUE;
+    crc = crc16_ccitt_update(crc, (uint8_t *)&header, sizeof(header));
     PG_FOREACH(reg) {
         const uint16_t regSize = pgSize(reg);
         configRecord_t record = {
@@ -220,20 +229,19 @@ static bool writeSettingsToEEPROM(void)
             // write the only instance
             record.flags |= CR_CLASSICATION_SYSTEM;
             config_streamer_write(&streamer, (uint8_t *)&record, sizeof(record));
-            chk = updateChecksum(chk, (uint8_t *)&record, sizeof(record));
+            crc = crc16_ccitt_update(crc, (uint8_t *)&record, sizeof(record));
             config_streamer_write(&streamer, reg->address, regSize);
-            chk = updateChecksum(chk, reg->address, regSize);
+            crc = crc16_ccitt_update(crc, reg->address, regSize);
         } else {
             // write one instance for each profile
-            for (uint8_t profileIndex = 0; profileIndex < MAX_PROFILE_COUNT; profileIndex++) {
+            for (uint8_t profileIndex = 0; profileIndex < PG_PROFILE_COUNT; profileIndex++) {
                 record.flags = 0;
-
                 record.flags |= ((profileIndex + 1) & CR_CLASSIFICATION_MASK);
                 config_streamer_write(&streamer, (uint8_t *)&record, sizeof(record));
-                chk = updateChecksum(chk, (uint8_t *)&record, sizeof(record));
+                crc = crc16_ccitt_update(crc, (uint8_t *)&record, sizeof(record));
                 const uint8_t *address = reg->address + (regSize * profileIndex);
                 config_streamer_write(&streamer, address, regSize);
-                chk = updateChecksum(chk, address, regSize);
+                crc = crc16_ccitt_update(crc, address, regSize);
             }
         }
     }
@@ -243,15 +251,15 @@ static bool writeSettingsToEEPROM(void)
     };
 
     config_streamer_write(&streamer, (uint8_t *)&footer, sizeof(footer));
-    chk = updateChecksum(chk, (uint8_t *)&footer, sizeof(footer));
+    crc = crc16_ccitt_update(crc, (uint8_t *)&footer, sizeof(footer));
 
-    // append checksum now
-    chk = ~chk;
-    config_streamer_write(&streamer, &chk, sizeof(chk));
+    // include inverted CRC in big endian format in the CRC
+    const uint16_t invertedBigEndianCrc = ~(((crc & 0xFF) << 8) | (crc >> 8));
+    config_streamer_write(&streamer, (uint8_t *)&invertedBigEndianCrc, sizeof(crc));
 
     config_streamer_flush(&streamer);
 
-    bool success = config_streamer_finish(&streamer) == 0;
+    const bool success = config_streamer_finish(&streamer) == 0;
 
     return success;
 }

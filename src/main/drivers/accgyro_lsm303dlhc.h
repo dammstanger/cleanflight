@@ -22,8 +22,7 @@
   */
 
 /* LSM303DLHC ACC struct */
-typedef struct
-{
+typedef struct {
   uint8_t Power_Mode;                         /* Power-down/Normal Mode */
   uint8_t AccOutput_DataRate;                 /* OUT data rate */
   uint8_t Axes_Enable;                        /* Axes enable */
@@ -31,25 +30,23 @@ typedef struct
   uint8_t BlockData_Update;                   /* Block Data Update */
   uint8_t Endianness;                         /* Endian Data selection */
   uint8_t AccFull_Scale;                      /* Full Scale selection */
-}LSM303DLHCAcc_InitTypeDef;
+} LSM303DLHCAcc_InitTypeDef;
 
 /* LSM303DLHC Acc High Pass Filter struct */
-typedef struct
-{
+typedef struct {
   uint8_t HighPassFilter_Mode_Selection;      /* Internal filter mode */
   uint8_t HighPassFilter_CutOff_Frequency;    /* High pass filter cut-off frequency */
   uint8_t HighPassFilter_AOI1;                /* HPF_enabling/disabling for AOI function on interrupt 1 */
   uint8_t HighPassFilter_AOI2;                /* HPF_enabling/disabling for AOI function on interrupt 2 */
-}LSM303DLHCAcc_FilterConfigTypeDef;
+} LSM303DLHCAcc_FilterConfigTypeDef;
 
 /* LSM303DLHC Mag struct */
-typedef struct
-{
+typedef struct {
   uint8_t Temperature_Sensor;                /* Temperature sensor enable/disable */
   uint8_t MagOutput_DataRate;                /* OUT data rate */
   uint8_t Working_Mode;                      /* operating mode */
   uint8_t MagFull_Scale;                     /* Full Scale selection */
-}LSM303DLHCMag_InitTypeDef;
+} LSM303DLHCMag_InitTypeDef;
 /**
   * @}
   */
@@ -78,34 +75,11 @@ typedef struct
   * @brief  LSM303DLHC I2C Interface pins
   */
 #define LSM303DLHC_I2C                       I2C1
-#define LSM303DLHC_I2C_CLK                   RCC_APB1Periph_I2C1
-
-#define LSM303DLHC_I2C_SCK_PIN               GPIO_Pin_6                  /* PB.06 */
-#define LSM303DLHC_I2C_SCK_GPIO_PORT         GPIOB                       /* GPIOB */
-#define LSM303DLHC_I2C_SCK_GPIO_CLK          RCC_AHBPeriph_GPIOB
-#define LSM303DLHC_I2C_SCK_SOURCE            GPIO_PinSource6
-#define LSM303DLHC_I2C_SCK_AF                GPIO_AF_4
-
-#define LSM303DLHC_I2C_SDA_PIN               GPIO_Pin_7                  /* PB.7 */
-#define LSM303DLHC_I2C_SDA_GPIO_PORT         GPIOB                       /* GPIOB */
-#define LSM303DLHC_I2C_SDA_GPIO_CLK          RCC_AHBPeriph_GPIOB
-#define LSM303DLHC_I2C_SDA_SOURCE            GPIO_PinSource7
-#define LSM303DLHC_I2C_SDA_AF                GPIO_AF_4
-
-#define LSM303DLHC_DRDY_PIN                  GPIO_Pin_2                  /* PE.02 */
-#define LSM303DLHC_DRDY_GPIO_PORT            GPIOE                       /* GPIOE */
-#define LSM303DLHC_DRDY_GPIO_CLK             RCC_AHBPeriph_GPIOE
-#define LSM303DLHC_DRDY_IO                   PE2
-
-#define LSM303DLHC_I2C_INT1_PIN              GPIO_Pin_4                  /* PE.04 */
-#define LSM303DLHC_I2C_INT1_GPIO_PORT        GPIOE                       /* GPIOE */
-#define LSM303DLHC_I2C_INT1_GPIO_CLK         RCC_AHBPeriph_GPIOE
-#define LSM303DLHC_I2C_INT1_IO               PE4
-
-#define LSM303DLHC_I2C_INT2_PIN              GPIO_Pin_5                  /* PE.05 */
-#define LSM303DLHC_I2C_INT2_GPIO_PORT        GPIOE                       /* GPIOE */
-#define LSM303DLHC_I2C_INT2_GPIO_CLK         RCC_AHBPeriph_GPIOE
-#define LSM303DLHC_I2C_INT2_IO               PE5
+#define LSM303DLHC_I2C_SCK_PIN               PB6                         /* PB.06 */
+#define LSM303DLHC_I2C_SDA_PIN               PB7                         /* PB.7 */
+#define LSM303DLHC_DRDY_PIN                  PE2                         /* PE.02 */
+#define LSM303DLHC_I2C_INT1_PIN              PE4                         /* PE.04 */
+#define LSM303DLHC_I2C_INT2_PIN              PE5                         /* PE.05 */
 
 /******************************************************************************/
 /*************************** START REGISTER MAPPING  **************************/
@@ -221,10 +195,10 @@ typedef struct
 /** @defgroup Acc_Full_Scale_Selection
   * @{
   */
-#define LSM303DLHC_FULLSCALE_2G            ((uint8_t)0x00)  /*!< ±2 g */
-#define LSM303DLHC_FULLSCALE_4G            ((uint8_t)0x10)  /*!< ±4 g */
-#define LSM303DLHC_FULLSCALE_8G            ((uint8_t)0x20)  /*!< ±8 g */
-#define LSM303DLHC_FULLSCALE_16G           ((uint8_t)0x30)  /*!< ±16 g */
+#define LSM303DLHC_FULLSCALE_2G            ((uint8_t)0x00)  /*!< +/-2 g */
+#define LSM303DLHC_FULLSCALE_4G            ((uint8_t)0x10)  /*!< +/-4 g */
+#define LSM303DLHC_FULLSCALE_8G            ((uint8_t)0x20)  /*!< +/-8 g */
+#define LSM303DLHC_FULLSCALE_16G           ((uint8_t)0x30)  /*!< +/-16 g */
 /**
   * @}
   */
@@ -414,13 +388,13 @@ typedef struct
 /** @defgroup Mag_Full_Scale
   * @{
   */
-#define  LSM303DLHC_FS_1_3_GA               ((uint8_t) 0x20)  /*!< Full scale = ±1.3 Gauss */
-#define  LSM303DLHC_FS_1_9_GA               ((uint8_t) 0x40)  /*!< Full scale = ±1.9 Gauss */
-#define  LSM303DLHC_FS_2_5_GA               ((uint8_t) 0x60)  /*!< Full scale = ±2.5 Gauss */
-#define  LSM303DLHC_FS_4_0_GA               ((uint8_t) 0x80)  /*!< Full scale = ±4.0 Gauss */
-#define  LSM303DLHC_FS_4_7_GA               ((uint8_t) 0xA0)  /*!< Full scale = ±4.7 Gauss */
-#define  LSM303DLHC_FS_5_6_GA               ((uint8_t) 0xC0)  /*!< Full scale = ±5.6 Gauss */
-#define  LSM303DLHC_FS_8_1_GA               ((uint8_t) 0xE0)  /*!< Full scale = ±8.1 Gauss */
+#define  LSM303DLHC_FS_1_3_GA               ((uint8_t) 0x20)  /*!< Full scale = +/-1.3 Gauss */
+#define  LSM303DLHC_FS_1_9_GA               ((uint8_t) 0x40)  /*!< Full scale = +/-1.9 Gauss */
+#define  LSM303DLHC_FS_2_5_GA               ((uint8_t) 0x60)  /*!< Full scale = +/-2.5 Gauss */
+#define  LSM303DLHC_FS_4_0_GA               ((uint8_t) 0x80)  /*!< Full scale = +/-4.0 Gauss */
+#define  LSM303DLHC_FS_4_7_GA               ((uint8_t) 0xA0)  /*!< Full scale = +/-4.7 Gauss */
+#define  LSM303DLHC_FS_5_6_GA               ((uint8_t) 0xC0)  /*!< Full scale = +/-5.6 Gauss */
+#define  LSM303DLHC_FS_8_1_GA               ((uint8_t) 0xE0)  /*!< Full scale = +/-8.1 Gauss */
 /**
   * @}
   */
@@ -464,5 +438,5 @@ typedef struct
 #define LSM303DLHC_TEMPSENSOR_DISABLE        ((uint8_t) 0x00)   /*!< Temp sensor Disable */
 
 
-bool lsm303dlhcAccDetect(acc_t *acc);
+bool lsm303dlhcAccDetect(accDev_t *acc);
 

@@ -17,18 +17,28 @@
 
 #pragma once
 
+#include "common/time.h"
+#include "config/parameter_group.h"
+
 typedef struct transponderConfig_s {
-    uint8_t data[6];
+    transponderProvider_e provider;
+    uint8_t reserved;
+    uint8_t data[9];
 } transponderConfig_t;
+
+typedef struct transponderRequirement_s {
+    uint8_t provider; // See transponderProvider_e
+    uint8_t dataLength;
+} transponderRequirement_t;
+
+extern const transponderRequirement_t transponderRequirements[TRANSPONDER_PROVIDER_COUNT];
 
 PG_DECLARE(transponderConfig_t, transponderConfig);
 
-void transponderInit(uint8_t* transponderCode);
+void transponderInit(void);
 
-void transponderEnable(void);
-void transponderDisable(void);
-void updateTransponder(void);
-void transponderUpdateData(uint8_t* transponderData);
+void transponderUpdate(timeUs_t currentTimeUs);
+void transponderUpdateData(void);
 void transponderTransmitOnce(void);
 void transponderStartRepeating(void);
 void transponderStopRepeating(void);

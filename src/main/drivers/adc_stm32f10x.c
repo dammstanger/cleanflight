@@ -19,21 +19,53 @@
 #include <stdint.h>
 #include <string.h>
 
-#include <platform.h>
+#include "platform.h"
+
+#ifdef USE_ADC
 
 #include "build/build_config.h"
 
-#include "config/parameter_group.h"
-
 #include "system.h"
-
-#include "sensors/sensors.h" // FIXME dependency into the main code
-
 #include "sensor.h"
 #include "accgyro.h"
-
 #include "adc.h"
 #include "adc_impl.h"
+#include "io.h"
+#include "rcc.h"
+#include "dma.h"
+
+#ifndef ADC_INSTANCE
+#define ADC_INSTANCE   ADC1
+#endif
+
+const adcDevice_t adcHardware[] = {
+    { .ADCx = ADC1, .rccADC = RCC_APB2(ADC1), .DMAy_Channelx = DMA1_Channel1 }
+};
+
+ADCDevice adcDeviceByInstance(ADC_TypeDef *instance)
+{
+    if (instance == ADC1)
+        return ADCDEV_1;
+
+/* TODO -- ADC2 available on large 10x devices.
+    if (instance == ADC2)
+        return ADCDEV_2;
+*/
+    return ADCINVALID;
+}
+
+const adcTagMap_t adcTagMap[] = {
+    { DEFIO_TAG_E__PA0, ADC_Channel_0 }, // ADC12
+    { DEFIO_TAG_E__PA1, ADC_Channel_1 }, // ADC12
+    { DEFIO_TAG_E__PA2, ADC_Channel_2 }, // ADC12
+    { DEFIO_TAG_E__PA3, ADC_Channel_3 }, // ADC12
+    { DEFIO_TAG_E__PA4, ADC_Channel_4 }, // ADC12
+    { DEFIO_TAG_E__PA5, ADC_Channel_5 }, // ADC12
+    { DEFIO_TAG_E__PA6, ADC_Channel_6 }, // ADC12
+    { DEFIO_TAG_E__PA7, ADC_Channel_7 }, // ADC12
+    { DEFIO_TAG_E__PB0, ADC_Channel_8 }, // ADC12
+    { DEFIO_TAG_E__PB1, ADC_Channel_9 }, // ADC12
+};
 
 // Driver for STM32F103CB onboard ADC
 //
@@ -45,75 +77,62 @@
 // NAZE rev.5 hardware has PA5 (ADC1_IN5) on breakout pad on bottom of board
 //
 
-#ifdef USE_ADC
-
-void adcInit(drv_adc_config_t *init)
+void adcInit(const adcConfig_t *config)
 {
-#if defined(CJMCU) || defined(CC3D)
-    UNUSED(init);
-#endif
 
-    uint8_t i;
     uint8_t configuredAdcChannels = 0;
 
-    memset(&adcConfig, 0, sizeof(adcConfig));
+    memset(&adcOperatingConfig, 0, sizeof(adcOperatingConfig));
 
-    GPIO_InitTypeDef GPIO_InitStructure;
-    GPIO_StructInit(&GPIO_InitStructure);
-    GPIO_InitStructure.GPIO_Mode  = GPIO_Mode_AIN;
-
-#ifdef ADC0_GPIO
-    if (init->channelMask & ADC_CHANNEL0_ENABLE) {
-        GPIO_InitStructure.GPIO_Pin = ADC0_GPIO_PIN;
-        GPIO_Init(ADC0_GPIO, &GPIO_InitStructure);
-        adcConfig[ADC_CHANNEL0].adcChannel = ADC0_CHANNEL;
-        adcConfig[ADC_CHANNEL0].dmaIndex = configuredAdcChannels++;
-        adcConfig[ADC_CHANNEL0].enabled = true;
-        adcConfig[ADC_CHANNEL0].sampleTime = ADC_SampleTime_239Cycles5;
+    if (config->vbat.enabled) {
+        adcOperatingConfig[ADC_BATTERY].tag = config->vbat.ioTag;
     }
-#endif
 
-#ifdef ADC1_GPIO
-    if (init->channelMask & ADC_CHANNEL1_ENABLE) {
-        GPIO_InitStructure.GPIO_Pin = ADC1_GPIO_PIN;
-        GPIO_Init(ADC1_GPIO, &GPIO_InitStructure);
-        adcConfig[ADC_CHANNEL1].adcChannel = ADC1_CHANNEL;
-        adcConfig[ADC_CHANNEL1].dmaIndex = configuredAdcChannels++;
-        adcConfig[ADC_CHANNEL1].enabled = true;
-        adcConfig[ADC_CHANNEL1].sampleTime = ADC_SampleTime_239Cycles5;
+    if (config->rssi.enabled) {
+        adcOperatingConfig[ADC_RSSI].tag = config->rssi.ioTag;  //RSSI_ADC_CHANNEL;
     }
-#endif
 
-#ifdef ADC2_GPIO
-    if (init->channelMask & ADC_CHANNEL2_ENABLE) {
-        GPIO_InitStructure.GPIO_Pin = ADC2_GPIO_PIN;
-        GPIO_Init(ADC2_GPIO, &GPIO_InitStructure);
-        adcConfig[ADC_CHANNEL2].adcChannel = ADC2_CHANNEL;
-        adcConfig[ADC_CHANNEL2].dmaIndex = configuredAdcChannels++;
-        adcConfig[ADC_CHANNEL2].enabled = true;
-        adcConfig[ADC_CHANNEL2].sampleTime = ADC_SampleTime_239Cycles5;
+    if (config->external1.enabled) {
+        adcOperatingConfig[ADC_EXTERNAL1].tag = config->external1.ioTag; //EXTERNAL1_ADC_CHANNEL;
     }
-#endif
 
-#ifdef ADC3_GPIO
-    if (init->channelMask & ADC_CHANNEL3_ENABLE) {
-        GPIO_InitStructure.GPIO_Pin   = ADC3_GPIO_PIN;
-        GPIO_Init(ADC3_GPIO, &GPIO_InitStructure);
-        adcConfig[ADC_CHANNEL3].adcChannel = ADC3_CHANNEL;
-        adcConfig[ADC_CHANNEL3].dmaIndex = configuredAdcChannels++;
-        adcConfig[ADC_CHANNEL3].enabled = true;
-        adcConfig[ADC_CHANNEL3].sampleTime = ADC_SampleTime_239Cycles5;
+    if (config->current.enabled) {
+        adcOperatingConfig[ADC_CURRENT].tag = config->current.ioTag;  //CURRENT_METER_ADC_CHANNEL;
     }
-#endif
+
+    ADCDevice device = adcDeviceByInstance(ADC_INSTANCE);
+    if (device == ADCINVALID)
+        return;
+
+    const adcDevice_t adc = adcHardware[device];
+
+    bool adcActive = false;
+    for (int i = 0; i < ADC_CHANNEL_COUNT; i++) {
+        if (!adcOperatingConfig[i].tag)
+            continue;
+
+        adcActive = true;
+        IOInit(IOGetByTag(adcOperatingConfig[i].tag), OWNER_ADC_BATT + i, 0);
+        IOConfigGPIO(IOGetByTag(adcOperatingConfig[i].tag), IO_CONFIG(GPIO_Mode_AIN, 0));
+        adcOperatingConfig[i].adcChannel = adcChannelByTag(adcOperatingConfig[i].tag);
+        adcOperatingConfig[i].dmaIndex = configuredAdcChannels++;
+        adcOperatingConfig[i].sampleTime = ADC_SampleTime_239Cycles5;
+        adcOperatingConfig[i].enabled = true;
+    }
+
+    if (!adcActive) {
+        return;
+    }
 
     RCC_ADCCLKConfig(RCC_PCLK2_Div8);  // 9MHz from 72MHz APB2 clock(HSE), 8MHz from 64MHz (HSI)
-    RCC_AHBPeriphClockCmd(ADC_AHB_PERIPHERAL, ENABLE);
-    RCC_APB2PeriphClockCmd(ADC_ABP2_PERIPHERAL, ENABLE);
+    RCC_ClockCmd(adc.rccADC, ENABLE);
 
-    DMA_DeInit(ADC_DMA_CHANNEL);
+    dmaInit(dmaGetIdentifier(adc.DMAy_Channelx), OWNER_ADC, 0);
+
+    DMA_DeInit(adc.DMAy_Channelx);
     DMA_InitTypeDef DMA_InitStructure;
     DMA_StructInit(&DMA_InitStructure);
-    DMA_InitStructure.DMA_PeripheralBaseAddr = (uint32_t)&ADC_INSTANCE->DR;
+    DMA_InitStructure.DMA_PeripheralBaseAddr = (uint32_t)&adc.ADCx->DR;
     DMA_InitStructure.DMA_MemoryBaseAddr = (uint32_t)adcValues;
     DMA_InitStructure.DMA_DIR = DMA_DIR_PeripheralSRC;
     DMA_InitStructure.DMA_BufferSize = configuredAdcChannels;
@@ -124,8 +143,8 @@ void adcInit(drv_adc_config_t *init)
     DMA_InitStructure.DMA_Mode = DMA_Mode_Circular;
     DMA_InitStructure.DMA_Priority = DMA_Priority_High;
     DMA_InitStructure.DMA_M2M = DMA_M2M_Disable;
-    DMA_Init(ADC_DMA_CHANNEL, &DMA_InitStructure);
-    DMA_Cmd(ADC_DMA_CHANNEL, ENABLE);
+    DMA_Init(adc.DMAy_Channelx, &DMA_InitStructure);
+    DMA_Cmd(adc.DMAy_Channelx, ENABLE);
 
     ADC_InitTypeDef ADC_InitStructure;
     ADC_StructInit(&ADC_InitStructure);
@@ -135,25 +154,24 @@ void adcInit(drv_adc_config_t *init)
     ADC_InitStructure.ADC_ExternalTrigConv = ADC_ExternalTrigConv_None;
     ADC_InitStructure.ADC_DataAlign = ADC_DataAlign_Right;
     ADC_InitStructure.ADC_NbrOfChannel = configuredAdcChannels;
-    ADC_Init(ADC_INSTANCE, &ADC_InitStructure);
+    ADC_Init(adc.ADCx, &ADC_InitStructure);
 
     uint8_t rank = 1;
-    for (i = 0; i < ADC_CHANNEL_COUNT; i++) {
-        if (!adcConfig[i].enabled) {
+    for (int i = 0; i < ADC_CHANNEL_COUNT; i++) {
+        if (!adcOperatingConfig[i].enabled) {
             continue;
         }
-        ADC_RegularChannelConfig(ADC_INSTANCE, adcConfig[i].adcChannel, rank++, adcConfig[i].sampleTime);
+        ADC_RegularChannelConfig(adc.ADCx, adcOperatingConfig[i].adcChannel, rank++, adcOperatingConfig[i].sampleTime);
     }
 
-    ADC_DMACmd(ADC_INSTANCE, ENABLE);
-    ADC_Cmd(ADC_INSTANCE, ENABLE);
+    ADC_DMACmd(adc.ADCx, ENABLE);
+    ADC_Cmd(adc.ADCx, ENABLE);
 
-    ADC_ResetCalibration(ADC_INSTANCE);
-    while(ADC_GetResetCalibrationStatus(ADC_INSTANCE));
-    ADC_StartCalibration(ADC_INSTANCE);
-    while(ADC_GetCalibrationStatus(ADC_INSTANCE));
+    ADC_ResetCalibration(adc.ADCx);
+    while (ADC_GetResetCalibrationStatus(adc.ADCx));
+    ADC_StartCalibration(adc.ADCx);
+    while (ADC_GetCalibrationStatus(adc.ADCx));
 
-    ADC_SoftwareStartConvCmd(ADC_INSTANCE, ENABLE);
+    ADC_SoftwareStartConvCmd(adc.ADCx, ENABLE);
 }
-
 #endif

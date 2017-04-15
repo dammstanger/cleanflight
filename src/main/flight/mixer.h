@@ -17,18 +17,38 @@
 
 #pragma once
 
-#if defined(USE_QUAD_MIXER_ONLY)
-#define MAX_SUPPORTED_MOTORS 4
+#include "config/parameter_group.h"
+#include "drivers/io_types.h"
+#include "drivers/pwm_output.h"
 
-#elif defined(TARGET_MOTOR_COUNT)
-#define MAX_SUPPORTED_MOTORS TARGET_MOTOR_COUNT
+#define QUAD_MOTOR_COUNT 4
+#define BRUSHED_MOTORS_PWM_RATE 16000
+#define BRUSHLESS_MOTORS_PWM_RATE 480
 
-#else
-#define MAX_SUPPORTED_MOTORS 12
-#endif
+/*
+  DshotSettingRequest (KISS24). Spin direction, 3d and save Settings reqire 10 requests.. and the TLM Byte must always be high if 1-47 are used to send settings
+  0 = stop
+  1-5: beep
+  6: ESC info request (FW Version and SN sent over the tlm wire)
+  7: spin direction 1
+  8: spin direction 2
+  9: 3d mode off
+  10: 3d mode on
+  11: ESC settings request (saved settings over the TLM wire)
+  12: save Settings
 
-#define YAW_JUMP_PREVENTION_LIMIT_LOW 80
-#define YAW_JUMP_PREVENTION_LIMIT_HIGH 500
+  3D Mode:
+  0 = stop
+  48   (low) - 1047 (high) -> negative direction
+  1048 (low) - 2047 (high) -> positive direction
+*/
+
+// Digital protocol has fixed values
+#define DSHOT_DISARM_COMMAND      0
+#define DSHOT_MIN_THROTTLE       48
+#define DSHOT_MAX_THROTTLE     2047
+#define DSHOT_3D_DEADBAND_LOW  1047
+#define DSHOT_3D_DEADBAND_HIGH 1048
 
 // Note: this is called MultiType/MULTITYPE_* in baseflight.
 typedef enum mixerMode
@@ -57,7 +77,8 @@ typedef enum mixerMode
     MIXER_ATAIL4 = 22,
     MIXER_CUSTOM = 23,
     MIXER_CUSTOM_AIRPLANE = 24,
-    MIXER_CUSTOM_TRI = 25
+    MIXER_CUSTOM_TRI = 25,
+    MIXER_QUADX_1234 = 26
 } mixerMode_e;
 
 // Custom mixer data per motor
@@ -68,7 +89,7 @@ typedef struct motorMixer_s {
     float yaw;
 } motorMixer_t;
 
-PG_DECLARE_ARR(motorMixer_t, MAX_SUPPORTED_MOTORS, customMotorMixer);
+PG_DECLARE_ARRAY(motorMixer_t, MAX_SUPPORTED_MOTORS, customMotorMixer);
 
 // Custom mixer configuration
 typedef struct mixer_s {
@@ -79,43 +100,44 @@ typedef struct mixer_s {
 
 typedef struct mixerConfig_s {
     uint8_t mixerMode;
-    uint8_t pid_at_min_throttle;            // when enabled pids are used at minimum throttle
-    int8_t yaw_motor_direction;
-    uint16_t yaw_jump_prevention_limit;      // make limit configurable (original fixed value was 100)
-#ifdef USE_SERVOS
-    uint8_t tri_unarmed_servo;              // send tail servo correction pulses even when unarmed
-    float servo_lowpass_freq;             // lowpass servo filter frequency selection; 1/1000ths of loop freq
-    int8_t servo_lowpass_enable;            // enable/disable lowpass filter
-#endif
+    bool yaw_motors_reversed;
 } mixerConfig_t;
 
 PG_DECLARE(mixerConfig_t, mixerConfig);
 
-typedef struct motor3DConfig_s {
-    uint16_t deadband3d_low;                // min 3d value
-    uint16_t deadband3d_high;               // max 3d value
-    uint16_t neutral3d;                     // center 3d value
-} motor3DConfig_t;
+typedef struct motorConfig_s {
+    motorDevConfig_t dev;
+    uint16_t digitalIdleOffsetValue;        // Idle value for DShot protocol, full motor output = 10000
+    uint16_t minthrottle;                   // Set the minimum throttle command sent to the ESC (Electronic Speed Controller). This is the minimum value that allow motors to run at a idle speed.
+    uint16_t maxthrottle;                   // This is the maximum value for the ESCs at full power this value can be increased up to 2000
+    uint16_t mincommand;                    // This is the value for the ESCs when they are not armed. In some cases, this value must be lowered down to 900 for some specific ESCs
+} motorConfig_t;
 
-#ifndef SKIP_3D_FLIGHT
-PG_DECLARE(motor3DConfig_t, motor3DConfig);
-#endif
+PG_DECLARE(motorConfig_t, motorConfig);
 
 #define CHANNEL_FORWARDING_DISABLED (uint8_t)0xFF
 
+extern const mixer_t mixers[];
 extern int16_t motor[MAX_SUPPORTED_MOTORS];
 extern int16_t motor_disarmed[MAX_SUPPORTED_MOTORS];
+struct rxConfig_s;
 
-extern bool motorLimitReached;
+uint8_t getMotorCount();
+float getMotorMixRange();
 
-void mixerInit(motorMixer_t *customMotorMixers);
-void writeAllMotors(int16_t mc);
 void mixerLoadMix(int index, motorMixer_t *customMixers);
+void mixerInit(mixerMode_e mixerMode);
+
+void mixerConfigureOutput(void);
+
 void mixerResetDisarmedMotors(void);
-void mixTable(void);
-void servoMixTable(void);
+struct pidProfile_s;
+void mixTable(struct pidProfile_s *pidProfile);
+void syncMotors(bool enabled);
 void writeMotors(void);
 void stopMotors(void);
-void StopPwmAllMotors(void);
-void mixerInitialiseServoFiltering(uint32_t targetLooptime);
-int16_t calculateMotorOff(void);
+void stopPwmAllMotors(void);
+
+bool isMotorProtocolDshot(void);
+uint16_t convertExternalToMotor(uint16_t externalValue);
+uint16_t convertMotorToExternal(uint16_t motorValue);

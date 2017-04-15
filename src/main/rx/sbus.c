@@ -19,22 +19,19 @@
 #include <stdint.h>
 #include <stdlib.h>
 
-#include <platform.h>
+#include "platform.h"
 
-#include "build/build_config.h"
+#ifdef SERIAL_RX
 
-#include "config/parameter_group.h"
+#include "common/utils.h"
 
-#include "drivers/dma.h"
 #include "drivers/system.h"
 
-#include "drivers/gpio.h"
-#include "drivers/inverter.h"
-
-#include "drivers/serial.h"
-#include "drivers/serial_uart.h"
 #include "io/serial.h"
 
+#ifdef TELEMETRY
+#include "telemetry/telemetry.h"
+#endif
 #include "rx/rx.h"
 #include "rx/sbus.h"
 
@@ -70,39 +67,17 @@ static uint16_t sbusStateFlags = 0;
 #define SBUS_FRAME_BEGIN_BYTE 0x0F
 
 #define SBUS_BAUDRATE 100000
+
+#if !defined(SBUS_PORT_OPTIONS)
 #define SBUS_PORT_OPTIONS (SERIAL_STOPBITS_2 | SERIAL_PARITY_EVEN)
+#endif
 
 #define SBUS_DIGITAL_CHANNEL_MIN 173
 #define SBUS_DIGITAL_CHANNEL_MAX 1812
 
 static bool sbusFrameDone = false;
-static void sbusDataReceive(uint16_t c);
-static uint16_t sbusReadRawRC(const rxRuntimeConfig_t *rxRuntimeConfig, uint8_t chan);
-uint8_t sbusFrameStatus(void);
 
 static uint32_t sbusChannelData[SBUS_MAX_CHANNEL];
-
-bool sbusInit(const rxConfig_t *rxConfig, rxRuntimeConfig_t *rxRuntimeConfig)
-{
-    int b;
-    for (b = 0; b < SBUS_MAX_CHANNEL; b++)
-        sbusChannelData[b] = (16 * rxConfig->midrc) / 10 - 1408;
-
-    rxRuntimeConfig->channelCount = SBUS_MAX_CHANNEL;
-    rxRuntimeConfig->rxRefreshRate = 11000;
-
-    rxRuntimeConfig->rcReadRawFn = sbusReadRawRC;
-    rxRuntimeConfig->rcFrameStatusFn = sbusFrameStatus;
-
-    serialPortConfig_t *portConfig = findSerialPortConfig(FUNCTION_RX_SERIAL);
-    if (!portConfig) {
-        return false;
-    }
-    portOptions_t options = (rxConfig->sbus_inversion) ? (SBUS_PORT_OPTIONS | SERIAL_INVERTED) : SBUS_PORT_OPTIONS;
-    serialPort_t *sBusPort = openSerialPort(portConfig->identifier, FUNCTION_RX_SERIAL, sbusDataReceive, SBUS_BAUDRATE, MODE_RX, options);
-
-    return sBusPort != NULL;
-}
 
 #define SBUS_FLAG_CHANNEL_17        (1 << 0)
 #define SBUS_FLAG_CHANNEL_18        (1 << 1)
@@ -168,19 +143,18 @@ static void sbusDataReceive(uint16_t c)
 
     if (sbusFramePosition < SBUS_FRAME_SIZE) {
         sbusFrame.bytes[sbusFramePosition++] = (uint8_t)c;
-        if (sbusFramePosition == SBUS_FRAME_SIZE) {
-            // endByte currently ignored
+        if (sbusFramePosition < SBUS_FRAME_SIZE) {
+            sbusFrameDone = false;
+        } else {
             sbusFrameDone = true;
 #ifdef DEBUG_SBUS_PACKETS
-            debug[2] = sbusFrameTime;
+        debug[2] = sbusFrameTime;
 #endif
-        } else {
-            sbusFrameDone = false;
         }
     }
 }
 
-uint8_t sbusFrameStatus(void)
+static uint8_t sbusFrameStatus(void)
 {
     if (!sbusFrameDone) {
         return RX_FRAME_PENDING;
@@ -248,5 +222,46 @@ static uint16_t sbusReadRawRC(const rxRuntimeConfig_t *rxRuntimeConfig, uint8_t 
     UNUSED(rxRuntimeConfig);
     // Linear fitting values read from OpenTX-ppmus and comparing with values received by X4R
     // http://www.wolframalpha.com/input/?i=linear+fit+%7B173%2C+988%7D%2C+%7B1812%2C+2012%7D%2C+%7B993%2C+1500%7D
-    return (0.625f * sbusChannelData[chan]) + 880;
+    return (5 * sbusChannelData[chan] / 8) + 880;
 }
+
+bool sbusInit(const rxConfig_t *rxConfig, rxRuntimeConfig_t *rxRuntimeConfig)
+{
+    for (int b = 0; b < SBUS_MAX_CHANNEL; b++) {
+        sbusChannelData[b] = (16 * rxConfig->midrc) / 10 - 1408;
+    }
+
+    rxRuntimeConfig->channelCount = SBUS_MAX_CHANNEL;
+    rxRuntimeConfig->rxRefreshRate = 11000;
+
+    rxRuntimeConfig->rcReadRawFn = sbusReadRawRC;
+    rxRuntimeConfig->rcFrameStatusFn = sbusFrameStatus;
+
+    const serialPortConfig_t *portConfig = findSerialPortConfig(FUNCTION_RX_SERIAL);
+    if (!portConfig) {
+        return false;
+    }
+
+#ifdef TELEMETRY
+    bool portShared = telemetryCheckRxPortShared(portConfig);
+#else
+    bool portShared = false;
+#endif
+
+    serialPort_t *sBusPort = openSerialPort(portConfig->identifier, 
+        FUNCTION_RX_SERIAL, 
+        sbusDataReceive, 
+        SBUS_BAUDRATE, 
+        portShared ? MODE_RXTX : MODE_RX, 
+        SBUS_PORT_OPTIONS | (rxConfig->sbus_inversion ? SERIAL_INVERTED : 0) | (rxConfig->halfDuplex ? SERIAL_BIDIR : 0)
+        );
+
+#ifdef TELEMETRY
+    if (portShared) {
+        telemetrySharedPort = sBusPort;
+    }
+#endif
+
+    return sBusPort != NULL;
+}
+#endif

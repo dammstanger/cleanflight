@@ -29,72 +29,119 @@ extern "C" {
 #include "unittest_macros.h"
 #include "gtest/gtest.h"
 
-
-TEST(NotchFilterTest, Initialise)
+TEST(FilterUnittest, TestFirFilterInit)
 {
-    // given
-    biquadFilter_t filter;
+#define BUFLEN 4
+    float buf[BUFLEN];
+    firFilter_t filter;
 
-    // when
-    biquadFilterInitNotch(&filter, 1000, 100, 70);
 
-    // then
-    EXPECT_FLOAT_EQ( 0.82364058f, filter.b0);
-    EXPECT_FLOAT_EQ(-1.3326783f,  filter.b1);
-    EXPECT_FLOAT_EQ( 0.82364058f, filter.b2);
-    EXPECT_FLOAT_EQ(-1.3326783f,  filter.a1);
-    EXPECT_FLOAT_EQ( 0.64728117f, filter.a2);
+    firFilterInit(&filter, buf, BUFLEN, NULL);
 
-    // and
-    EXPECT_FLOAT_EQ( 0.0f, filter.d1);
-    EXPECT_FLOAT_EQ( 0.0f, filter.d2);
+    EXPECT_EQ(buf, filter.buf);
+    EXPECT_EQ(0, filter.coeffs);
+    EXPECT_EQ(0, filter.movingSum);
+    EXPECT_EQ(0, filter.index);
+    EXPECT_EQ(0, filter.count);
+    EXPECT_EQ(BUFLEN, filter.bufLength);
+    EXPECT_EQ(BUFLEN, filter.coeffsLength);
 }
 
-
-TEST(NotchFilterTest, ApplyZero)
+TEST(FilterUnittest, TestFirFilterUpdateAverage)
 {
-    // given
-    biquadFilter_t filter;
-    biquadFilterInitNotch(&filter, 1000, 100, 70);
+#define BUFLEN 4
+    float buf[BUFLEN];
+    const float coeffs[BUFLEN] = {1.0f, 1.0f, 1.0f, 1.0f};
+    firFilter_t filter;
 
-    // when
-    float result = biquadFilterApply(&filter, 0);
+    firFilterInit(&filter, buf, BUFLEN, coeffs);
 
-    // then
-    EXPECT_FLOAT_EQ(0.0f, result);
+    firFilterUpdateAverage(&filter, 2.0f);
+    EXPECT_FLOAT_EQ(2.0f, filter.buf[0]);
+    EXPECT_FLOAT_EQ(2.0f, filter.movingSum);
+    EXPECT_EQ(1, filter.index);
+    EXPECT_EQ(1, filter.count);
+    EXPECT_EQ(2.0f, firFilterCalcMovingAverage(&filter));
+    EXPECT_FLOAT_EQ(2.0f, firFilterCalcPartialAverage(&filter, 1));
+    EXPECT_FLOAT_EQ(2.0f, firFilterApply(&filter));
+
+    firFilterUpdateAverage(&filter, 3.0f);
+    EXPECT_FLOAT_EQ(3.0f, filter.buf[1]);
+    EXPECT_FLOAT_EQ(5.0f, filter.movingSum);
+    EXPECT_EQ(2, filter.index);
+    EXPECT_EQ(2, filter.count);
+    EXPECT_EQ(2.5f, firFilterCalcMovingAverage(&filter));
+    EXPECT_FLOAT_EQ(2.5f, firFilterCalcPartialAverage(&filter, 2));
+    EXPECT_FLOAT_EQ(5.0f, firFilterApply(&filter));
+
+    firFilterUpdateAverage(&filter, 4.0f);
+    EXPECT_FLOAT_EQ(4.0f, filter.buf[2]);
+    EXPECT_FLOAT_EQ(9.0f, filter.movingSum);
+    EXPECT_EQ(3, filter.index);
+    EXPECT_EQ(3, filter.count);
+    EXPECT_EQ(3.0f, firFilterCalcMovingAverage(&filter));
+    EXPECT_FLOAT_EQ(3.0f, firFilterCalcPartialAverage(&filter, 3));
+    EXPECT_FLOAT_EQ(9.0f, firFilterApply(&filter));
+
+    firFilterUpdateAverage(&filter, 5.0f);
+    EXPECT_FLOAT_EQ(5.0f, filter.buf[3]);
+    EXPECT_FLOAT_EQ(14.0f, filter.movingSum);
+    EXPECT_EQ(0, filter.index);
+    EXPECT_EQ(4, filter.count);
+    EXPECT_EQ(3.5f, firFilterCalcMovingAverage(&filter));
+    EXPECT_FLOAT_EQ(3.5f, firFilterCalcPartialAverage(&filter, 4));
+    EXPECT_FLOAT_EQ(14.0f, firFilterApply(&filter));
+
+    firFilterUpdateAverage(&filter, 6.0f);
+    EXPECT_FLOAT_EQ(6.0f, filter.buf[0]);
+    EXPECT_FLOAT_EQ(18.0f, filter.movingSum);
+    EXPECT_EQ(1, filter.index);
+    EXPECT_EQ(BUFLEN, filter.count);
+    EXPECT_EQ(4.5f, firFilterCalcMovingAverage(&filter));
+    EXPECT_FLOAT_EQ(4.5f, firFilterCalcPartialAverage(&filter, BUFLEN));
+    EXPECT_FLOAT_EQ(18.0f, firFilterApply(&filter));
+
+    firFilterUpdateAverage(&filter, 7.0f);
+    EXPECT_FLOAT_EQ(7.0f, filter.buf[1]);
+    EXPECT_FLOAT_EQ(22.0f, filter.movingSum);
+    EXPECT_EQ(2, filter.index);
+    EXPECT_EQ(BUFLEN, filter.count);
+    EXPECT_EQ(5.5f, firFilterCalcMovingAverage(&filter));
+    EXPECT_FLOAT_EQ(5.5f, firFilterCalcPartialAverage(&filter, BUFLEN));
+    EXPECT_FLOAT_EQ(22.0f, firFilterApply(&filter));
 }
 
-
-TEST(NotchFilterTest, ApplySweepWithNoFiltering)
+TEST(FilterUnittest, TestFirFilterApply)
 {
-    // given
-    biquadFilter_t filter;
-    biquadFilterInitNotch(&filter, 1000, 100, 100);
+#define BUFLEN 4
+    float buf[BUFLEN];
+    firFilter_t filter;
+    const float coeffs[BUFLEN] = {26.0f, 27.0f, 28.0f, 29.0f};
 
-    float result;
+    float expected = 0.0f;
+    firFilterInit(&filter, buf, BUFLEN, coeffs);
 
-    // when
-    for (int i = 0; i <= 100; i++) {
-        result = biquadFilterApply(&filter, i);
-    }
+    firFilterUpdate(&filter, 2.0f);
+    expected = 2.0f * 26.0f;
+    EXPECT_FLOAT_EQ(expected, firFilterApply(&filter));
 
-    // then
-    EXPECT_FLOAT_EQ(100.0f, result);
-}
+    firFilterUpdate(&filter, 3.0f);
+    expected = 3.0f * 26.0f + 2.0 * 27.0;
+    EXPECT_FLOAT_EQ(expected, firFilterApply(&filter));
 
-TEST(NotchFilterTest, ApplySweepWithDefaults)
-{
-    // given
-    biquadFilter_t filter;
-    biquadFilterInitNotch(&filter, 1000, 260, 160);
+    firFilterUpdate(&filter, 4.0f);
+    expected = 4.0f * 26.0f + 3.0 * 27.0 + 2.0 * 28.0;
+    EXPECT_FLOAT_EQ(expected, firFilterApply(&filter));
 
-    float result;
+    firFilterUpdate(&filter, 5.0f);
+    expected = 5.0f * 26.0f + 4.0 * 27.0 + 3.0 * 28.0 + 2.0f * 29.0f;
+    EXPECT_FLOAT_EQ(expected, firFilterApply(&filter));
 
-    // when
-    for (int i = 0; i <= 100; i++) {
-        result = biquadFilterApply(&filter, i);
-    }
+    firFilterUpdate(&filter, 6.0f);
+    expected = 6.0f * 26.0f + 5.0 * 27.0 + 4.0 * 28.0 + 3.0f * 29.0f;
+    EXPECT_FLOAT_EQ(expected, firFilterApply(&filter));
 
-    // then
-    EXPECT_FLOAT_EQ(99.525948f, result);
+    firFilterUpdate(&filter, 7.0f);
+    expected = 7.0f * 26.0f + 6.0 * 27.0 + 5.0 * 28.0 + 4.0f * 29.0f;
+    EXPECT_FLOAT_EQ(expected, firFilterApply(&filter));
 }

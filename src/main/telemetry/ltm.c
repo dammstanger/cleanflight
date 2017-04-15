@@ -31,47 +31,54 @@
 #include <stdint.h>
 #include <string.h>
 
-#include <platform.h>
-
-#include "build/build_config.h"
+#include "platform.h"
 
 #ifdef TELEMETRY
 
+#include "build/build_config.h"
+
 #include "common/maths.h"
 #include "common/axis.h"
-
-#include "config/parameter_group.h"
+#include "common/color.h"
+#include "common/utils.h"
 
 #include "drivers/system.h"
 #include "drivers/sensor.h"
 #include "drivers/accgyro.h"
-#include "drivers/serial.h"
 
-#include "fc/fc_serial.h"
+#include "fc/config.h"
+#include "fc/rc_controls.h"
+#include "fc/runtime_config.h"
 
 #include "sensors/sensors.h"
 #include "sensors/acceleration.h"
+#include "sensors/gyro.h"
+#include "sensors/barometer.h"
+#include "sensors/boardalignment.h"
 #include "sensors/battery.h"
 
 #include "io/serial.h"
+#include "io/gimbal.h"
 #include "io/gps.h"
+#include "io/ledstrip.h"
+#include "io/beeper.h"
+
+#include "rx/rx.h"
 
 #include "flight/mixer.h"
 #include "flight/pid.h"
 #include "flight/imu.h"
 #include "flight/failsafe.h"
-#include "flight/altitudehold.h"
+#include "flight/altitude.h"
 #include "flight/navigation.h"
 
 #include "telemetry/telemetry.h"
 #include "telemetry/ltm.h"
 
-#include "fc/runtime_config.h"
 
 #define TELEMETRY_LTM_INITIAL_PORT_MODE MODE_TX
 #define LTM_CYCLETIME   100
 
-extern uint16_t rssi;           // FIXME dependency on mw.c
 static serialPort_t *ltmPort;
 static serialPortConfig_t *portConfig;
 static bool ltmEnabled;
@@ -137,7 +144,7 @@ static void ltm_gframe(void)
     ltm_serialise_8((uint8_t)(GPS_speed / 100));
 
 #if defined(BARO) || defined(SONAR)
-    ltm_alt = (sensors(SENSOR_SONAR) || sensors(SENSOR_BARO)) ? altitudeHoldGetEstimatedAltitude() : GPS_altitude * 100;
+    ltm_alt = (sensors(SENSOR_SONAR) || sensors(SENSOR_BARO)) ? getEstimatedAltitude() : GPS_altitude * 100;
 #else
     ltm_alt = GPS_altitude * 100;
 #endif
@@ -183,7 +190,7 @@ static void ltm_sframe(void)
     if (failsafeIsActive())
         lt_statemode |= 2;
     ltm_initialise_packet('S');
-    ltm_serialise_16(vbat * 100);    //vbat converted to mv
+    ltm_serialise_16(getBatteryVoltage() * 100);    //vbat converted to mv
     ltm_serialise_16(0);             //  current, not implemented
     ltm_serialise_8((uint8_t)((rssi * 254) / 1023));        // scaled RSSI (uchar)
     ltm_serialise_8(0);              // no airspeed
@@ -272,7 +279,7 @@ void configureLtmTelemetryPort(void)
     if (!portConfig) {
         return;
     }
-    baudRate_e baudRateIndex = portConfig->baudRates[BAUDRATE_TELEMETRY];
+    baudRate_e baudRateIndex = portConfig->telemetry_baudrateIndex;
     if (baudRateIndex == BAUD_AUTO) {
         baudRateIndex = BAUD_19200;
     }
@@ -282,19 +289,21 @@ void configureLtmTelemetryPort(void)
     ltmEnabled = true;
 }
 
-bool checkLtmTelemetryState(void)
+void checkLtmTelemetryState(void)
 {
-    bool newTelemetryEnabledValue = telemetryDetermineEnabledState(ltmPortSharing);
-
-    if (newTelemetryEnabledValue == ltmEnabled) {
-        return false;
+    if (portConfig && telemetryCheckRxPortShared(portConfig)) {
+        if (!ltmEnabled && telemetrySharedPort != NULL) {
+            ltmPort = telemetrySharedPort;
+            ltmEnabled = true;
+        }
+    } else {
+        bool newTelemetryEnabledValue = telemetryDetermineEnabledState(ltmPortSharing);
+        if (newTelemetryEnabledValue == ltmEnabled)
+            return;
+        if (newTelemetryEnabledValue)
+            configureLtmTelemetryPort();
+        else
+            freeLtmTelemetryPort();
     }
-
-    if (newTelemetryEnabledValue)
-        configureLtmTelemetryPort();
-    else
-        freeLtmTelemetryPort();
-
-    return true;
 }
 #endif

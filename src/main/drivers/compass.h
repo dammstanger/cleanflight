@@ -17,7 +17,15 @@
 
 #pragma once
 
-typedef struct mag_s {
+#include "sensor.h"
+
+typedef struct magDev_s {
     sensorInitFuncPtr init;                                 // initialize function
     sensorReadFuncPtr read;                                 // read 3 axis data function
-} mag_t;
+    busDevice_t bus;
+    sensor_align_e magAlign;
+} magDev_t;
+
+#ifndef MAG_I2C_INSTANCE
+#define MAG_I2C_INSTANCE I2C_DEVICE
+#endif

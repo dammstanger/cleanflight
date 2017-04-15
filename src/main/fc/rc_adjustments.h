@@ -17,14 +17,9 @@
 
 #pragma once
 
-#define PID_MIN      0
-#define PID_MAX      200
-#define PID_F_MIN    0
-#define PID_F_MAX    100
-#define RC_RATE_MIN  0
-#define RC_RATE_MAX  250
-#define EXPO_MIN     0
-#define EXPO_MAX     100
+#include <stdbool.h>
+#include "config/parameter_group.h"
+#include "fc/rc_controls.h"
 
 typedef enum {
     ADJUSTMENT_NONE = 0,
@@ -48,45 +43,22 @@ typedef enum {
     ADJUSTMENT_ROLL_P,
     ADJUSTMENT_ROLL_I,
     ADJUSTMENT_ROLL_D,
-    ADJUSTMENT_ALT_P,
-    ADJUSTMENT_ALT_I,
-    ADJUSTMENT_ALT_D,
-    ADJUSTMENT_VEL_P,
-    ADJUSTMENT_VEL_I,
-    ADJUSTMENT_VEL_D,
-    ADJUSTMENT_MAG_P,
-    ADJUSTMENT_POS_P,
-    ADJUSTMENT_POS_I,
-    ADJUSTMENT_POSR_P,
-    ADJUSTMENT_POSR_I,
-    ADJUSTMENT_POSR_D,
-    ADJUSTMENT_NAVR_P,
-    ADJUSTMENT_NAVR_I,
-    ADJUSTMENT_NAVR_D,
-    ADJUSTMENT_LEVEL_P,
-    ADJUSTMENT_LEVEL_I,
-    ADJUSTMENT_LEVEL_D,
-
+    ADJUSTMENT_RC_RATE_YAW,
+    ADJUSTMENT_D_SETPOINT,
+    ADJUSTMENT_D_SETPOINT_TRANSITION,
+    ADJUSTMENT_HORIZON_STRENGTH,
+    ADJUSTMENT_FUNCTION_COUNT
 } adjustmentFunction_e;
 
-#define ADJUSTMENT_FUNCTION_COUNT 39
 
 typedef enum {
     ADJUSTMENT_MODE_STEP,
     ADJUSTMENT_MODE_SELECT
 } adjustmentMode_e;
 
-typedef struct adjustmentStepConfig_s {
-    uint8_t step;
-} adjustmentStepConfig_t;
-
-typedef struct adjustmentSelectConfig_s {
-    uint8_t switchPositions;
-} adjustmentSelectConfig_t;
-
 typedef union adjustmentConfig_u {
-    adjustmentStepConfig_t stepConfig;
-    adjustmentSelectConfig_t selectConfig;
+    uint8_t step;
+    uint8_t switchPositions;
 } adjustmentData_t;
 
 typedef struct adjustmentConfig_s {
@@ -112,26 +84,22 @@ typedef struct adjustmentRange_s {
 
 typedef struct adjustmentState_s {
     uint8_t auxChannelIndex;
-    adjustmentConfig_t config;
+    const adjustmentConfig_t *config;
     uint32_t timeoutAt;
-    adjustmentRange_t *range;
 } adjustmentState_t;
 
-#define MAX_ADJUSTMENT_RANGE_COUNT 12 // enough for 2 * 6pos switches.
-
-typedef struct adjustmentProfile_s {
-    adjustmentRange_t adjustmentRanges[MAX_ADJUSTMENT_RANGE_COUNT];
-} adjustmentProfile_t;
-
-PG_DECLARE_PROFILE(adjustmentProfile_t, adjustmentProfile);
 
 #ifndef MAX_SIMULTANEOUS_ADJUSTMENT_COUNT
 #define MAX_SIMULTANEOUS_ADJUSTMENT_COUNT 4 // enough for 4 x 3position switches / 4 aux channel
 #endif
 
+#define MAX_ADJUSTMENT_RANGE_COUNT 15
+
+PG_DECLARE_ARRAY(adjustmentRange_t, MAX_ADJUSTMENT_RANGE_COUNT, adjustmentRanges);
 
 void resetAdjustmentStates(void);
-void configureAdjustmentState(adjustmentRange_t *adjustmentRange);
-void updateAdjustmentStates(adjustmentRange_t *adjustmentRanges);
-struct rxConfig_s;
-void processRcAdjustments(controlRateConfig_t *controlRateConfig, struct rxConfig_s *rxConfig);
+void updateAdjustmentStates(void);
+struct controlRateConfig_s;
+void processRcAdjustments(struct controlRateConfig_s *controlRateConfig);
+struct pidProfile_s;
+void useAdjustmentConfig(struct pidProfile_s *pidProfileToUse);

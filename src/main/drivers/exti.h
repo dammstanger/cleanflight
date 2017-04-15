@@ -18,23 +18,15 @@
 
 #pragma once
 
-#include "io.h"
+#include <stdbool.h>
+
+#include "io_types.h"
 
 // old EXTI interface, to be replaced
 typedef struct extiConfig_s {
-#ifdef STM32F303
-    uint32_t gpioAHBPeripherals;
-#endif
-#ifdef STM32F10X
-    uint32_t gpioAPB2Peripherals;
-#endif
-    uint16_t gpioPin;
-    GPIO_TypeDef *gpioPort;
-
-    ioTag_t io;
+    ioTag_t tag;
 } extiConfig_t;
 
-// new io EXTI interface
 typedef struct extiCallbackRec_s extiCallbackRec_t;
 typedef void extiHandlerCallback(extiCallbackRec_t *self);
 
@@ -45,6 +37,10 @@ struct extiCallbackRec_s {
 void EXTIInit(void);
 
 void EXTIHandlerInit(extiCallbackRec_t *cb, extiHandlerCallback *fn);
+#if defined(STM32F7)
+void EXTIConfig(IO_t io, extiCallbackRec_t *cb, int irqPriority, ioConfig_t config);
+#else
 void EXTIConfig(IO_t io, extiCallbackRec_t *cb, int irqPriority, EXTITrigger_TypeDef trigger);
+#endif
 void EXTIRelease(IO_t io);
 void EXTIEnable(IO_t io, bool enable);

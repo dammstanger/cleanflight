@@ -17,6 +17,8 @@
 
 #pragma once
 
+#include "config/parameter_group.h"
+
 typedef struct featureConfig_s {
     uint32_t enabledFeatures;
 } featureConfig_t;
@@ -30,3 +32,7 @@ void featureSet(uint32_t mask);
 void featureClear(uint32_t mask);
 void featureClearAll(void);
 uint32_t featureMask(void);
+
+void intFeatureClearAll(uint32_t *features);
+void intFeatureSet(uint32_t mask, uint32_t *features);
+void intFeatureClear(uint32_t mask, uint32_t *features);

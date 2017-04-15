@@ -16,106 +16,437 @@
  */
 
 #include <stdbool.h>
+#include <stdlib.h>
 #include <stdint.h>
 
 #include <platform.h>
 
+#include "cms/cms.h"
+
+#include "common/axis.h"
+#include "common/color.h"
+#include "common/utils.h"
+#include "common/filter.h"
+
+#include "config/feature.h"
+#include "config/parameter_group.h"
+#include "config/parameter_group_ids.h"
+
+#include "drivers/sensor.h"
+#include "drivers/accgyro.h"
+#include "drivers/compass.h"
+#include "drivers/serial.h"
+#include "drivers/stack_check.h"
+#include "drivers/vtx_common.h"
+#include "drivers/transponder_ir.h"
+
+#include "fc/config.h"
+#include "fc/fc_msp.h"
 #include "fc/fc_tasks.h"
+#include "fc/fc_core.h"
+#include "fc/rc_controls.h"
+#include "fc/runtime_config.h"
+#include "fc/cli.h"
+#include "fc/fc_dispatch.h"
+
+#include "flight/altitude.h"
+#include "flight/imu.h"
+#include "flight/mixer.h"
+#include "flight/pid.h"
+
+#include "io/beeper.h"
+#include "io/dashboard.h"
+#include "io/gps.h"
+#include "io/ledstrip.h"
+#include "io/osd.h"
+#include "io/osd_slave.h"
+#include "io/serial.h"
+#include "io/transponder_ir.h"
+#include "io/vtx_tramp.h" // Will be gone
+
+#include "msp/msp_serial.h"
+
+#include "rx/rx.h"
+
+#include "sensors/sensors.h"
+#include "sensors/acceleration.h"
+#include "sensors/barometer.h"
+#include "sensors/battery.h"
+#include "sensors/compass.h"
+#include "sensors/gyro.h"
+#include "sensors/gyroanalyse.h"
+#include "sensors/sonar.h"
+#include "sensors/esc_sensor.h"
 
 #include "scheduler/scheduler.h"
 
-// No need for a linked list for the queue, since items are only inserted at startup
-#ifdef UNIT_TEST
-#define TASK_QUEUE_ARRAY_SIZE (TASK_COUNT + 2) // 1 extra space so test code can check for buffer overruns
-#else
-#define TASK_QUEUE_ARRAY_SIZE (TASK_COUNT + 1) // extra item for NULL pointer at end of queue
+#include "telemetry/telemetry.h"
+
+#ifdef USE_BST
+void taskBstMasterProcess(timeUs_t currentTimeUs);
 #endif
 
-const uint32_t taskQueueArraySize = TASK_QUEUE_ARRAY_SIZE;
-const uint32_t taskCount = TASK_COUNT;
-cfTask_t* taskQueueArray[TASK_QUEUE_ARRAY_SIZE];
+#define TASK_PERIOD_HZ(hz) (1000000 / (hz))
+#define TASK_PERIOD_MS(ms) ((ms) * 1000)
+#define TASK_PERIOD_US(us) (us)
 
-cfTask_t cfTasks[] = {
+#ifndef USE_OSD_SLAVE
+static void taskUpdateAccelerometer(timeUs_t currentTimeUs)
+{
+    UNUSED(currentTimeUs);
+
+    accUpdate(&accelerometerConfigMutable()->accelerometerTrims);
+}
+#endif
+
+bool taskSerialCheck(timeUs_t currentTimeUs, timeDelta_t currentDeltaTimeUs) {
+    UNUSED(currentTimeUs);
+    UNUSED(currentDeltaTimeUs);
+
+    return mspSerialWaiting();
+}
+
+static void taskHandleSerial(timeUs_t currentTimeUs)
+{
+    UNUSED(currentTimeUs);
+#ifdef USE_CLI
+    // in cli mode, all serial stuff goes to here. enter cli mode by sending #
+    if (cliMode) {
+        cliProcess();
+        return;
+    }
+#endif
+    mspSerialProcess(ARMING_FLAG(ARMED) ? MSP_SKIP_NON_MSP_DATA : MSP_EVALUATE_NON_MSP_DATA, mspFcProcessCommand, mspFcProcessReply);
+}
+
+void taskBatteryAlerts(timeUs_t currentTimeUs)
+{
+    UNUSED(currentTimeUs);
+
+    if (!ARMING_FLAG(ARMED)) {
+        // the battery *might* fall out in flight, but if that happens the FC will likely be off too unless the user has battery backup.
+        batteryUpdatePresence();
+    }
+    batteryUpdateStates();
+
+    batteryUpdateAlarms();
+}
+
+#ifndef USE_OSD_SLAVE
+static void taskUpdateRxMain(timeUs_t currentTimeUs)
+{
+    processRx(currentTimeUs);
+    isRXDataNew = true;
+
+#if !defined(BARO) && !defined(SONAR)
+    // updateRcCommands sets rcCommand, which is needed by updateAltHoldState and updateSonarAltHoldState
+    updateRcCommands();
+#endif
+    updateLEDs();
+
+#ifdef BARO
+    if (sensors(SENSOR_BARO)) {
+        updateAltHoldState();
+    }
+#endif
+
+#ifdef SONAR
+    if (sensors(SENSOR_SONAR)) {
+        updateSonarAltHoldState();
+    }
+#endif
+}
+#endif
+
+#ifdef MAG
+static void taskUpdateCompass(timeUs_t currentTimeUs)
+{
+    if (sensors(SENSOR_MAG)) {
+        compassUpdate(currentTimeUs, &compassConfigMutable()->magZero);
+    }
+}
+#endif
+
+#ifdef BARO
+static void taskUpdateBaro(timeUs_t currentTimeUs)
+{
+    UNUSED(currentTimeUs);
+
+    if (sensors(SENSOR_BARO)) {
+        const uint32_t newDeadline = baroUpdate();
+        if (newDeadline != 0) {
+            rescheduleTask(TASK_SELF, newDeadline);
+        }
+    }
+}
+#endif
+
+#if defined(BARO) || defined(SONAR)
+static void taskCalculateAltitude(timeUs_t currentTimeUs)
+{
+    if (false
+#if defined(BARO)
+        || (sensors(SENSOR_BARO) && isBaroReady())
+#endif
+#if defined(SONAR)
+        || sensors(SENSOR_SONAR)
+#endif
+        ) {
+        calculateEstimatedAltitude(currentTimeUs);
+    }}
+#endif
+
+#ifdef TELEMETRY
+static void taskTelemetry(timeUs_t currentTimeUs)
+{
+    telemetryCheckState();
+
+    if (!cliMode && feature(FEATURE_TELEMETRY)) {
+        telemetryProcess(currentTimeUs);
+    }
+}
+#endif
+
+#ifdef VTX_CONTROL
+// Everything that listens to VTX devices
+void taskVtxControl(uint32_t currentTime)
+{
+    if (ARMING_FLAG(ARMED))
+        return;
+
+#ifdef VTX_COMMON
+    vtxCommonProcess(currentTime);
+#endif
+}
+#endif
+
+#ifdef USE_OSD_SLAVE
+void osdSlaveTasksInit(void)
+{
+    schedulerInit();
+    setTaskEnabled(TASK_SERIAL, true);
+
+    bool useBatteryVoltage = batteryConfig()->voltageMeterSource != VOLTAGE_METER_NONE;
+    setTaskEnabled(TASK_BATTERY_VOLTAGE, useBatteryVoltage);
+    bool useBatteryCurrent = batteryConfig()->currentMeterSource != CURRENT_METER_NONE;
+    setTaskEnabled(TASK_BATTERY_CURRENT, useBatteryCurrent);
+
+    bool useBatteryAlerts = (batteryConfig()->useVBatAlerts || batteryConfig()->useConsumptionAlerts);
+    setTaskEnabled(TASK_BATTERY_ALERTS, (useBatteryVoltage || useBatteryCurrent) && useBatteryAlerts);
+
+#ifdef TRANSPONDER
+    setTaskEnabled(TASK_TRANSPONDER, feature(FEATURE_TRANSPONDER));
+#endif
+
+    setTaskEnabled(TASK_OSD_SLAVE, true);
+
+#ifdef STACK_CHECK
+    setTaskEnabled(TASK_STACK_CHECK, true);
+#endif
+}
+#endif
+
+#ifndef USE_OSD_SLAVE
+void fcTasksInit(void)
+{
+    schedulerInit();
+    rescheduleTask(TASK_GYROPID, gyro.targetLooptime);
+    setTaskEnabled(TASK_GYROPID, true);
+
+    if (sensors(SENSOR_ACC)) {
+        setTaskEnabled(TASK_ACCEL, true);
+        rescheduleTask(TASK_ACCEL, acc.accSamplingInterval);
+    }
+
+    setTaskEnabled(TASK_ATTITUDE, sensors(SENSOR_ACC));
+    setTaskEnabled(TASK_SERIAL, true);
+    rescheduleTask(TASK_SERIAL, TASK_PERIOD_HZ(serialConfig()->serial_update_rate_hz));
+
+    bool useBatteryVoltage = batteryConfig()->voltageMeterSource != VOLTAGE_METER_NONE;
+    setTaskEnabled(TASK_BATTERY_VOLTAGE, useBatteryVoltage);
+    bool useBatteryCurrent = batteryConfig()->currentMeterSource != CURRENT_METER_NONE;
+    setTaskEnabled(TASK_BATTERY_CURRENT, useBatteryCurrent);
+
+    bool useBatteryAlerts = batteryConfig()->useVBatAlerts || batteryConfig()->useConsumptionAlerts || feature(FEATURE_OSD);
+    setTaskEnabled(TASK_BATTERY_ALERTS, (useBatteryVoltage || useBatteryCurrent) && useBatteryAlerts);
+
+    setTaskEnabled(TASK_RX, true);
+
+    setTaskEnabled(TASK_DISPATCH, dispatchIsEnabled());
+
+#ifdef BEEPER
+    setTaskEnabled(TASK_BEEPER, true);
+#endif
+#ifdef GPS
+    setTaskEnabled(TASK_GPS, feature(FEATURE_GPS));
+#endif
+#ifdef MAG
+    setTaskEnabled(TASK_COMPASS, sensors(SENSOR_MAG));
+#if defined(USE_SPI) && defined(USE_MAG_AK8963)
+    // fixme temporary solution for AK6983 via slave I2C on MPU9250
+    rescheduleTask(TASK_COMPASS, TASK_PERIOD_HZ(40));
+#endif
+#endif
+#ifdef BARO
+    setTaskEnabled(TASK_BARO, sensors(SENSOR_BARO));
+#endif
+#ifdef SONAR
+    setTaskEnabled(TASK_SONAR, sensors(SENSOR_SONAR));
+#endif
+#if defined(BARO) || defined(SONAR)
+    setTaskEnabled(TASK_ALTITUDE, sensors(SENSOR_BARO) || sensors(SENSOR_SONAR));
+#endif
+#ifdef USE_DASHBOARD
+    setTaskEnabled(TASK_DASHBOARD, feature(FEATURE_DASHBOARD));
+#endif
+#ifdef TELEMETRY
+    setTaskEnabled(TASK_TELEMETRY, feature(FEATURE_TELEMETRY));
+    if (feature(FEATURE_TELEMETRY)) {
+        if (rxConfig()->serialrx_provider == SERIALRX_JETIEXBUS) {
+            // Reschedule telemetry to 500hz for Jeti Exbus
+            rescheduleTask(TASK_TELEMETRY, TASK_PERIOD_HZ(500));
+        } else if (rxConfig()->serialrx_provider == SERIALRX_CRSF) {
+            // Reschedule telemetry to 500hz, 2ms for CRSF
+            rescheduleTask(TASK_TELEMETRY, TASK_PERIOD_HZ(500));
+        }
+    }
+#endif
+#ifdef LED_STRIP
+    setTaskEnabled(TASK_LEDSTRIP, feature(FEATURE_LED_STRIP));
+#endif
+#ifdef TRANSPONDER
+    setTaskEnabled(TASK_TRANSPONDER, feature(FEATURE_TRANSPONDER));
+#endif
+#ifdef OSD
+    setTaskEnabled(TASK_OSD, feature(FEATURE_OSD));
+#endif
+#ifdef USE_OSD_SLAVE
+    setTaskEnabled(TASK_OSD_SLAVE, true);
+#endif
+#ifdef USE_BST
+    setTaskEnabled(TASK_BST_MASTER_PROCESS, true);
+#endif
+#ifdef USE_ESC_SENSOR
+    setTaskEnabled(TASK_ESC_SENSOR, feature(FEATURE_ESC_SENSOR));
+#endif
+#ifdef CMS
+#ifdef USE_MSP_DISPLAYPORT
+    setTaskEnabled(TASK_CMS, true);
+#else
+    setTaskEnabled(TASK_CMS, feature(FEATURE_OSD) || feature(FEATURE_DASHBOARD));
+#endif
+#endif
+#ifdef STACK_CHECK
+    setTaskEnabled(TASK_STACK_CHECK, true);
+#endif
+#ifdef VTX_CONTROL
+#if defined(VTX_SMARTAUDIO) || defined(VTX_TRAMP)
+    setTaskEnabled(TASK_VTXCTRL, true);
+#endif
+#endif
+#ifdef USE_GYRO_DATA_ANALYSE
+    setTaskEnabled(TASK_GYRO_DATA_ANALYSE, true);
+#endif
+}
+#endif
+
+cfTask_t cfTasks[TASK_COUNT] = {
     [TASK_SYSTEM] = {
         .taskName = "SYSTEM",
         .taskFunc = taskSystem,
-        .desiredPeriod = TASK_PERIOD_MS(100),
-        .staticPriority = TASK_PRIORITY_HIGH,
+        .desiredPeriod = TASK_PERIOD_HZ(10),        // 10Hz, every 100 ms
+        .staticPriority = TASK_PRIORITY_MEDIUM_HIGH,
     },
 
-    [TASK_GYRO] = {
-        .taskName = "GYRO",
-        .checkFunc = taskGyroCheck,
-        .taskFunc = taskGyro,
-        .desiredPeriod = TASK_PERIOD_HZ(8000),
-        .staticPriority = TASK_PRIORITY_REALTIME,
-    },
-    [TASK_PID] = {
+#ifndef USE_OSD_SLAVE
+    [TASK_GYROPID] = {
         .taskName = "PID",
-        .checkFunc = taskPidCheck,
-        .taskFunc = taskPid,
-        .desiredPeriod = TASK_PERIOD_HZ(8000),
+        .subTaskName = "GYRO",
+        .taskFunc = taskMainPidLoop,
+        .desiredPeriod = TASK_GYROPID_DESIRED_PERIOD,
         .staticPriority = TASK_PRIORITY_REALTIME,
     },
 
     [TASK_ACCEL] = {
         .taskName = "ACCEL",
         .taskFunc = taskUpdateAccelerometer,
-        .desiredPeriod = TASK_PERIOD_MS(1),
+        .desiredPeriod = TASK_PERIOD_HZ(1000),      // 1000Hz, every 1ms
         .staticPriority = TASK_PRIORITY_MEDIUM,
     },
 
     [TASK_ATTITUDE] = {
         .taskName = "ATTITUDE",
-        .taskFunc = taskUpdateAttitude,
+        .taskFunc = imuUpdateAttitude,
         .desiredPeriod = TASK_PERIOD_HZ(100),
         .staticPriority = TASK_PRIORITY_MEDIUM,
     },
 
     [TASK_RX] = {
         .taskName = "RX",
-        .checkFunc = taskUpdateRxCheck,
+        .checkFunc = rxUpdateCheck,
         .taskFunc = taskUpdateRxMain,
-        .desiredPeriod = TASK_PERIOD_HZ(50),          // If event-based scheduling doesn't work, fallback to periodic scheduling
+        .desiredPeriod = TASK_PERIOD_HZ(50),        // If event-based scheduling doesn't work, fallback to periodic scheduling
         .staticPriority = TASK_PRIORITY_HIGH,
     },
+#endif
 
     [TASK_SERIAL] = {
         .taskName = "SERIAL",
         .taskFunc = taskHandleSerial,
-        .desiredPeriod = TASK_PERIOD_HZ(100),         // 100 Hz should be enough to flush up to 115 bytes @ 115200 baud
+#ifdef USE_OSD_SLAVE
+        .checkFunc = taskSerialCheck,
+        .desiredPeriod = TASK_PERIOD_HZ(100),
+        .staticPriority = TASK_PRIORITY_REALTIME,
+#else
+        .desiredPeriod = TASK_PERIOD_HZ(100),       // 100 Hz should be enough to flush up to 115 bytes @ 115200 baud
         .staticPriority = TASK_PRIORITY_LOW,
+#endif
     },
 
-    [TASK_HARDWARE_WATCHDOG] = {
-        .taskName = "HW_WATCHDOG",
-        .taskFunc = taskHardwareWatchdog,
-        .desiredPeriod = TASK_PERIOD_HZ(1),
+#ifndef USE_OSD_SLAVE
+    [TASK_DISPATCH] = {
+        .taskName = "DISPATCH",
+        .taskFunc = dispatchProcess,
+        .desiredPeriod = TASK_PERIOD_HZ(1000),
+        .staticPriority = TASK_PRIORITY_HIGH,
+    },
+#endif
+
+    [TASK_BATTERY_ALERTS] = {
+        .taskName = "BATTERY_ALERTS",
+        .taskFunc = taskBatteryAlerts,
+        .desiredPeriod = TASK_PERIOD_HZ(5),        // 5 Hz
         .staticPriority = TASK_PRIORITY_MEDIUM,
     },
 
-    [TASK_BATTERY] = {
-        .taskName = "BATTERY",
-        .taskFunc = taskUpdateBattery,
-        .desiredPeriod = TASK_PERIOD_MS(20),
+    [TASK_BATTERY_VOLTAGE] = {
+        .taskName = "BATTERY_VOLTAGE",
+        .taskFunc = batteryUpdateVoltage,
+        .desiredPeriod = TASK_PERIOD_HZ(50),
         .staticPriority = TASK_PRIORITY_MEDIUM,
     },
-
+    [TASK_BATTERY_CURRENT] = {
+        .taskName = "BATTERY_CURRENT",
+        .taskFunc = batteryUpdateCurrentMeter,
+        .desiredPeriod = TASK_PERIOD_HZ(50),
+        .staticPriority = TASK_PRIORITY_MEDIUM,
+    },
+#ifndef USE_OSD_SLAVE
 
 #ifdef BEEPER
     [TASK_BEEPER] = {
         .taskName = "BEEPER",
-        .taskFunc = taskUpdateBeeper,
-        .desiredPeriod = TASK_PERIOD_MS(10),
-        .staticPriority = TASK_PRIORITY_MEDIUM,
+        .taskFunc = beeperUpdate,
+        .desiredPeriod = TASK_PERIOD_HZ(100),       // 100 Hz
+        .staticPriority = TASK_PRIORITY_LOW,
     },
 #endif
 
 #ifdef GPS
     [TASK_GPS] = {
         .taskName = "GPS",
-        .taskFunc = taskProcessGPS,
-        .desiredPeriod = TASK_PERIOD_HZ(100),         // 115 (<256) bytes/call @ 115K
+        .taskFunc = gpsUpdate,
+        .desiredPeriod = TASK_PERIOD_HZ(100),        // Required to prevent buffer overruns if running at 115200 baud (115 bytes / period < 256 bytes buffer)
         .staticPriority = TASK_PRIORITY_MEDIUM,
     },
 #endif
@@ -124,8 +455,8 @@ cfTask_t cfTasks[] = {
     [TASK_COMPASS] = {
         .taskName = "COMPASS",
         .taskFunc = taskUpdateCompass,
-        .desiredPeriod = TASK_PERIOD_MS(100),
-        .staticPriority = TASK_PRIORITY_MEDIUM,
+        .desiredPeriod = TASK_PERIOD_HZ(10),        // Compass is updated at 10 Hz
+        .staticPriority = TASK_PRIORITY_LOW,
     },
 #endif
 
@@ -133,17 +464,17 @@ cfTask_t cfTasks[] = {
     [TASK_BARO] = {
         .taskName = "BARO",
         .taskFunc = taskUpdateBaro,
-        .desiredPeriod = TASK_PERIOD_MS(50),
-        .staticPriority = TASK_PRIORITY_MEDIUM,
+        .desiredPeriod = TASK_PERIOD_HZ(20),
+        .staticPriority = TASK_PRIORITY_LOW,
     },
 #endif
 
 #ifdef SONAR
     [TASK_SONAR] = {
         .taskName = "SONAR",
-        .taskFunc = taskUpdateSonar,
-        .desiredPeriod = TASK_PERIOD_MS(70),
-        .staticPriority = TASK_PRIORITY_MEDIUM,
+        .taskFunc = sonarUpdate,
+        .desiredPeriod = TASK_PERIOD_MS(70),        // 70ms required so that SONAR pulses do not interfere with each other
+        .staticPriority = TASK_PRIORITY_LOW,
     },
 #endif
 
@@ -151,53 +482,121 @@ cfTask_t cfTasks[] = {
     [TASK_ALTITUDE] = {
         .taskName = "ALTITUDE",
         .taskFunc = taskCalculateAltitude,
-        .desiredPeriod = TASK_PERIOD_MS(25),
-        .staticPriority = TASK_PRIORITY_MEDIUM,
+        .desiredPeriod = TASK_PERIOD_HZ(40),
+        .staticPriority = TASK_PRIORITY_LOW,
     },
+#endif
 #endif
 
 #ifdef TRANSPONDER
     [TASK_TRANSPONDER] = {
         .taskName = "TRANSPONDER",
-        .taskFunc = taskTransponder,
-        .desiredPeriod = TASK_PERIOD_MS(4),
+        .taskFunc = transponderUpdate,
+        .desiredPeriod = TASK_PERIOD_HZ(250),       // 250 Hz, 4ms
         .staticPriority = TASK_PRIORITY_LOW,
     },
 #endif
 
+#ifndef USE_OSD_SLAVE
+#ifdef USE_DASHBOARD
+    [TASK_DASHBOARD] = {
+        .taskName = "DASHBOARD",
+        .taskFunc = dashboardUpdate,
+        .desiredPeriod = TASK_PERIOD_HZ(10),
+        .staticPriority = TASK_PRIORITY_LOW,
+    },
+#endif
 #ifdef OSD
-    [TASK_DRAW_SCREEN] = {
-        .taskName = "DRAW_SCREEN",
-        .taskFunc = taskDrawScreen,
-        .desiredPeriod = 1000000 / 30,           // 30 Hz
-        .staticPriority = TASK_PRIORITY_MEDIUM,
-    },
-#endif
-
-#ifdef DISPLAY
-    [TASK_DISPLAY] = {
-        .taskName = "DISPLAY",
-        .taskFunc = taskUpdateDisplay,
-        .desiredPeriod = TASK_PERIOD_MS(100),
+    [TASK_OSD] = {
+        .taskName = "OSD",
+        .taskFunc = osdUpdate,
+        .desiredPeriod = TASK_PERIOD_HZ(60),        // 60 Hz
         .staticPriority = TASK_PRIORITY_LOW,
     },
 #endif
+#endif
 
+#ifdef USE_OSD_SLAVE
+    [TASK_OSD_SLAVE] = {
+        .taskName = "OSD_SLAVE",
+        .checkFunc = osdSlaveCheck,
+        .taskFunc = osdSlaveUpdate,
+        .desiredPeriod = TASK_PERIOD_HZ(60),        // 60 Hz
+        .staticPriority = TASK_PRIORITY_HIGH,
+    },
+#endif
+
+#ifndef USE_OSD_SLAVE
 #ifdef TELEMETRY
     [TASK_TELEMETRY] = {
         .taskName = "TELEMETRY",
         .taskFunc = taskTelemetry,
-        .desiredPeriod = TASK_PERIOD_MS(4),
-        .staticPriority = TASK_PRIORITY_IDLE,
+        .desiredPeriod = TASK_PERIOD_HZ(250),       // 250 Hz, 4ms
+        .staticPriority = TASK_PRIORITY_LOW,
     },
 #endif
 
 #ifdef LED_STRIP
     [TASK_LEDSTRIP] = {
         .taskName = "LEDSTRIP",
-        .taskFunc = taskLedStrip,
-        .desiredPeriod = TASK_PERIOD_MS(10),
+        .taskFunc = ledStripUpdate,
+        .desiredPeriod = TASK_PERIOD_HZ(100),       // 100 Hz, 10ms
+        .staticPriority = TASK_PRIORITY_LOW,
+    },
+#endif
+
+#ifdef USE_BST
+    [TASK_BST_MASTER_PROCESS] = {
+        .taskName = "BST_MASTER_PROCESS",
+        .taskFunc = taskBstMasterProcess,
+        .desiredPeriod = TASK_PERIOD_HZ(50),        // 50 Hz, 20ms
         .staticPriority = TASK_PRIORITY_IDLE,
     },
+#endif
+
+#ifdef USE_ESC_SENSOR
+    [TASK_ESC_SENSOR] = {
+        .taskName = "ESC_SENSOR",
+        .taskFunc = escSensorProcess,
+        .desiredPeriod = TASK_PERIOD_HZ(100),       // 100 Hz, 10ms
+        .staticPriority = TASK_PRIORITY_LOW,
+    },
+#endif
+
+#ifdef CMS
+    [TASK_CMS] = {
+        .taskName = "CMS",
+        .taskFunc = cmsHandler,
+        .desiredPeriod = TASK_PERIOD_HZ(60),        // 60 Hz
+        .staticPriority = TASK_PRIORITY_LOW,
+    },
+#endif
+
+#ifdef STACK_CHECK
+    [TASK_STACK_CHECK] = {
+        .taskName = "STACKCHECK",
+        .taskFunc = taskStackCheck,
+        .desiredPeriod = TASK_PERIOD_HZ(10),          // 10 Hz
+        .staticPriority = TASK_PRIORITY_IDLE,
+    },
+#endif
+
+#ifdef VTX_CONTROL
+    [TASK_VTXCTRL] = {
+        .taskName = "VTXCTRL",
+        .taskFunc = taskVtxControl,
+        .desiredPeriod = TASK_PERIOD_HZ(5),          // 5 Hz, 200ms
+        .staticPriority = TASK_PRIORITY_IDLE,
+    },
+#endif
+
+#ifdef USE_GYRO_DATA_ANALYSE
+    [TASK_GYRO_DATA_ANALYSE] = {
+        .taskName = "GYROFFT",
+        .taskFunc = gyroDataAnalyseUpdate,
+        .desiredPeriod = TASK_PERIOD_HZ(100),        // 100 Hz, 10ms
+        .staticPriority = TASK_PRIORITY_MEDIUM,
+    },
+#endif
 #endif
 };

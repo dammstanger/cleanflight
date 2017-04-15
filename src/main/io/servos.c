@@ -15,25 +15,45 @@
  * along with Cleanflight.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include <stdbool.h>
-#include <stdint.h>
-#include <string.h>
+#include "platform.h"
 
-#include <platform.h>
+#include "io.h"
+#include "io_impl.h"
 
-#include "build/debug.h"
+#include "light_led.h"
 
-#include "config/parameter_group.h"
-#include "config/parameter_group_ids.h"
-#include "config/config_reset.h"
+static IO_t leds[LED_NUMBER];
+static uint8_t ledPolarity = 0;
 
-#include "servos.h"
+void ledInit(const statusLedConfig_t *statusLedConfig)
+{
+    LED0_OFF;
+    LED1_OFF;
+    LED2_OFF;
 
-#ifdef USE_SERVOS
-PG_REGISTER_WITH_RESET_TEMPLATE(servoConfig_t, servoConfig, PG_SERVO_CONFIG, 0);
+    ledPolarity = statusLedConfig->polarity;
+    for (int i = 0; i < LED_NUMBER; i++) {
+        if (statusLedConfig->ledTags[i]) {
+            leds[i] = IOGetByTag(statusLedConfig->ledTags[i]);
+            IOInit(leds[i], OWNER_LED, RESOURCE_INDEX(i));
+            IOConfigGPIO(leds[i], IOCFG_OUT_PP);
+        } else {
+            leds[i] = IO_NONE;
+        }
+    }
 
-PG_RESET_TEMPLATE(servoConfig_t, servoConfig,
-    .servoCenterPulse = 1500,
-    .servo_pwm_rate = 50,
-);
-#endif
+    LED0_OFF;
+    LED1_OFF;
+    LED2_OFF;
+}
+
+void ledToggle(int led)
+{
+    IOToggle(leds[led]);
+}
+
+void ledSet(int led, bool on)
+{
+    const bool inverted = (1 << (led)) & ledPolarity;
+    IOWrite(leds[led], on ? inverted : !inverted);
+}

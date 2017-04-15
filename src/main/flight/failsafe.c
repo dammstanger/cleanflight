@@ -17,7 +17,6 @@
 
 #include <stdbool.h>
 #include <stdint.h>
-#include <string.h>
 
 #include <platform.h>
 
@@ -27,26 +26,26 @@
 
 #include "config/parameter_group.h"
 #include "config/parameter_group_ids.h"
-#include "config/config_reset.h"
 
 #include "drivers/system.h"
 
-#include "rx/rx.h"
-
-#include "io/beeper.h"
-
+#include "fc/config.h"
 #include "fc/rc_controls.h"
 #include "fc/runtime_config.h"
-#include "fc/config.h"
 
 #include "flight/failsafe.h"
+
+#include "io/beeper.h"
+#include "io/motors.h"
+
+#include "rx/rx.h"
 
 /*
  * Usage:
  *
- * failsafeInit() and useFailsafeConfig() must be called before the other methods are used.
+ * failsafeInit() and failsafeReset() must be called before the other methods are used.
  *
- * failsafeInit() and useFailsafeConfig() can be called in any order.
+ * failsafeInit() and failsafeReset() can be called in any order.
  * failsafeInit() should only be called once.
  *
  * enable() should be called after system initialisation.
@@ -57,13 +56,18 @@ static failsafeState_t failsafeState;
 PG_REGISTER_WITH_RESET_TEMPLATE(failsafeConfig_t, failsafeConfig, PG_FAILSAFE_CONFIG, 0);
 
 PG_RESET_TEMPLATE(failsafeConfig_t, failsafeConfig,
-    .failsafe_delay = 10,              // 1sec
-    .failsafe_off_delay = 200,         // 20sec
-    .failsafe_throttle = 1000,         // default throttle off.
-    .failsafe_throttle_low_delay = 100, // default throttle low delay for "just disarm" on failsafe condition
+    .failsafe_delay = 10,                            // 1sec
+    .failsafe_off_delay = 10,                        // 1sec
+    .failsafe_throttle = 1000,                       // default throttle off.
+    .failsafe_kill_switch = 0,                       // default failsafe switch action is identical to rc link loss
+    .failsafe_throttle_low_delay = 100,              // default throttle low delay for "just disarm" on failsafe condition
+    .failsafe_procedure = FAILSAFE_PROCEDURE_DROP_IT // default full failsafe procedure is 0: auto-landing
 );
 
-static void failsafeReset(void)
+/*
+ * Should called when the failsafe config needs to be changed - e.g. a different profile has been selected.
+ */
+void failsafeReset(void)
 {
     failsafeState.rxDataFailurePeriod = PERIOD_RXDATA_FAILURE + failsafeConfig()->failsafe_delay * MILLIS_PER_TENTH_SECOND;
     failsafeState.validRxDataReceivedAt = 0;
@@ -74,11 +78,6 @@ static void failsafeReset(void)
     failsafeState.receivingRxDataPeriodPreset = 0;
     failsafeState.phase = FAILSAFE_IDLE;
     failsafeState.rxLinkState = FAILSAFE_RXLINK_DOWN;
-}
-
-void useFailsafeConfig()
-{
-    failsafeReset();
 }
 
 void failsafeInit(void)
@@ -172,10 +171,11 @@ void failsafeUpdateState(void)
 
     bool receivingRxData = failsafeIsReceivingRxData();
     bool armed = ARMING_FLAG(ARMED);
-    bool failsafeSwitchIsOn = rcModeIsActive(BOXFAILSAFE);
+    bool failsafeSwitchIsOn = IS_RC_MODE_ACTIVE(BOXFAILSAFE);
     beeperMode_e beeperMode = BEEPER_SILENCE;
 
-    if (!receivingRxData) {
+    // Beep RX lost only if we are not seeing data and we have been armed earlier
+    if (!receivingRxData && ARMING_FLAG(WAS_EVER_ARMED)) {
         beeperMode = BEEPER_RX_LOST;
     }
 
@@ -188,7 +188,7 @@ void failsafeUpdateState(void)
             case FAILSAFE_IDLE:
                 if (armed) {
                     // Track throttle command below minimum time
-                    if (THROTTLE_HIGH == calculateThrottleStatus(rxConfig(), rcControlsConfig()->deadband3d_throttle)) {
+                    if (THROTTLE_HIGH == calculateThrottleStatus()) {
                         failsafeState.throttleLowPeriod = millis() + failsafeConfig()->failsafe_throttle_low_delay * MILLIS_PER_TENTH_SECOND;
                     }
                     // Kill switch logic (must be independent of receivingRxData to skip PERIOD_RXDATA_FAILURE delay before disarming)
@@ -272,7 +272,7 @@ void failsafeUpdateState(void)
                 if (receivingRxData) {
                     if (millis() > failsafeState.receivingRxDataPeriod) {
                         // rx link is good now, when arming via ARM switch, it must be OFF first
-                        if (!(!isUsingSticksForArming() && rcModeIsActive(BOXARM))) {
+                        if (!(!isUsingSticksForArming() && IS_RC_MODE_ACTIVE(BOXARM))) {
                             DISABLE_ARMING_FLAG(PREVENT_ARMING);
                             failsafeState.phase = FAILSAFE_RX_LOSS_RECOVERED;
                             reprocessState = true;

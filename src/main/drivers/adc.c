@@ -18,7 +18,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#include <platform.h>
+#include "platform.h"
+
 #include "build/build_config.h"
 #include "build/debug.h"
 
@@ -27,38 +28,40 @@
 #include "adc.h"
 #include "adc_impl.h"
 
+#include "common/utils.h"
+
 //#define DEBUG_ADC_CHANNELS
 
 #ifdef USE_ADC
-adc_config_t adcConfig[ADC_CHANNEL_COUNT];
+adcOperatingConfig_t adcOperatingConfig[ADC_CHANNEL_COUNT];
 volatile uint16_t adcValues[ADC_CHANNEL_COUNT];
 
+uint8_t adcChannelByTag(ioTag_t ioTag)
+{
+    for (uint8_t i = 0; i < ARRAYLEN(adcTagMap); i++) {
+        if (ioTag == adcTagMap[i].tag)
+            return adcTagMap[i].channel;
+    }
+    return 0;
+}
 
 uint16_t adcGetChannel(uint8_t channel)
 {
 #ifdef DEBUG_ADC_CHANNELS
-#if ADC_CHANNEL_COUNT > 0
-    if (adcConfig[0].enabled) {
-        debug[0] = adcValues[adcConfig[0].dmaIndex];
+    if (adcOperatingConfig[0].enabled) {
+        debug[0] = adcValues[adcOperatingConfig[0].dmaIndex];
+    }
+    if (adcOperatingConfig[1].enabled) {
+        debug[1] = adcValues[adcOperatingConfig[1].dmaIndex];
+    }
+    if (adcOperatingConfig[2].enabled) {
+        debug[2] = adcValues[adcOperatingConfig[2].dmaIndex];
+    }
+    if (adcOperatingConfig[3].enabled) {
+        debug[3] = adcValues[adcOperatingConfig[3].dmaIndex];
     }
 #endif
-#if ADC_CHANNEL_COUNT > 1
-    if (adcConfig[1].enabled) {
-        debug[1] = adcValues[adcConfig[1].dmaIndex];
-    }
-#endif
-#if ADC_CHANNEL_COUNT > 2
-    if (adcConfig[2].enabled) {
-        debug[2] = adcValues[adcConfig[2].dmaIndex];
-    }
-#endif
-#if ADC_CHANNEL_COUNT > 3
-    if (adcConfig[3].enabled) {
-        debug[3] = adcValues[adcConfig[3].dmaIndex];
-    }
-#endif
-#endif // DEBUG_ADC_CHANNELS
-    return adcValues[adcConfig[channel].dmaIndex];
+    return adcValues[adcOperatingConfig[channel].dmaIndex];
 }
 
 #else

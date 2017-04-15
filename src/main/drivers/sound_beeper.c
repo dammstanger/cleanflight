@@ -17,60 +17,63 @@
 
 #include <stdbool.h>
 #include <stdint.h>
-#include <stdlib.h>
 
-#include <platform.h>
-
-#include "build/build_config.h"
+#include "platform.h"
 
 #include "system.h"
-#include "gpio.h"
+#include "io.h"
 
 #include "sound_beeper.h"
+#include "pwm_output.h"
 
 
 #ifdef BEEPER
-
-void (*systemBeepPtr)(bool onoff) = NULL;
-
-static void beepNormal(bool onoff)
-{
-    if (onoff) {
-        digitalLo(BEEP_GPIO, BEEP_PIN);
-    } else {
-        digitalHi(BEEP_GPIO, BEEP_PIN);
-    }
-}
-
-static void beepInverted(bool onoff)
-{
-    if (onoff) {
-        digitalHi(BEEP_GPIO, BEEP_PIN);
-    } else {
-        digitalLo(BEEP_GPIO, BEEP_PIN);
-    }
-}
+static IO_t beeperIO = DEFIO_IO(NONE);
+static bool beeperInverted = false;
+static uint16_t beeperFrequency = 0;
 #endif
 
 void systemBeep(bool onoff)
 {
-#ifndef BEEPER
-    UNUSED(onoff);
+#ifdef BEEPER
+    if(beeperFrequency == 0) {
+        IOWrite(beeperIO, beeperInverted ? onoff : !onoff);
+    } else {
+        pwmWriteBeeper(onoff);
+    }
 #else
-    systemBeepPtr(onoff);
+    UNUSED(onoff);
 #endif
 }
 
-void beeperInit(beeperConfig_t *config)
+void systemBeepToggle(void)
 {
-#ifndef BEEPER
-    UNUSED(config);
+#ifdef BEEPER
+    if(beeperFrequency == 0) {
+        IOToggle(beeperIO);
+    } else {
+        pwmToggleBeeper();
+    }
+#endif
+}
+
+void beeperInit(const beeperDevConfig_t *config)
+{
+#ifdef BEEPER
+    beeperFrequency = config->frequency;
+    if(beeperFrequency == 0) {
+        beeperIO = IOGetByTag(config->ioTag);
+        beeperInverted = config->isInverted;
+        if (beeperIO) {
+            IOInit(beeperIO, OWNER_BEEPER, 0);
+            IOConfigGPIO(beeperIO, config->isOpenDrain ? IOCFG_OUT_OD : IOCFG_OUT_PP);
+        }
+        systemBeep(false);
+    } else {
+        beeperIO = IOGetByTag(config->ioTag);
+        beeperPwmInit(beeperIO, beeperFrequency);
+    }
 #else
-    initBeeperHardware(config);
-    if (config->isInverted)
-        systemBeepPtr = beepInverted;
-    else
-        systemBeepPtr = beepNormal;
-    BEEP_OFF;
+    UNUSED(config);
 #endif
 }

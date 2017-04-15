@@ -19,10 +19,26 @@
 
 #include "blackbox/blackbox_fielddefs.h"
 
+#include "common/time.h"
+
+#include "config/parameter_group.h"
+
+typedef enum BlackboxDevice {
+    BLACKBOX_DEVICE_NONE = 0,
+#ifdef USE_FLASHFS
+    BLACKBOX_DEVICE_FLASH = 1,
+#endif
+#ifdef USE_SDCARD
+    BLACKBOX_DEVICE_SDCARD = 2,
+#endif
+    BLACKBOX_DEVICE_SERIAL = 3
+} BlackboxDevice_e;
+
 typedef struct blackboxConfig_s {
     uint8_t rate_num;
     uint8_t rate_denom;
     uint8_t device;
+    uint8_t on_motor_test;
 } blackboxConfig_t;
 
 PG_DECLARE(blackboxConfig_t, blackboxConfig);
@@ -30,8 +46,9 @@ PG_DECLARE(blackboxConfig_t, blackboxConfig);
 void blackboxLogEvent(FlightLogEvent event, flightLogEventData_t *data);
 
 void initBlackbox(void);
-void handleBlackbox(void);
+void handleBlackbox(timeUs_t currentTimeUs);
+void validateBlackboxConfig();
 void startBlackbox(void);
 void finishBlackbox(void);
 
-bool blackboxMayEditConfig();
+bool blackboxMayEditConfig(void);

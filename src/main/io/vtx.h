@@ -15,44 +15,38 @@
  * along with Cleanflight.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#pragma once
+
+#include "fc/rc_controls.h"
+
+#define VTX_BAND_MIN                            1
+#define VTX_BAND_MAX                            5
+#define VTX_CHANNEL_MIN                         1
+#define VTX_CHANNEL_MAX                         8
+#define MAX_CHANNEL_ACTIVATION_CONDITION_COUNT  10
+
+typedef struct vtxChannelActivationCondition_s {
+    uint8_t auxChannelIndex;
+    uint8_t band;
+    uint8_t channel;
+    channelRange_t range;
+} vtxChannelActivationCondition_t;
+
 typedef struct vtxConfig_s {
-    uint8_t channel;         // 0 based index, 0 = lowest.  maximum depends on driver implementation
-    uint8_t band;            // 0 based index, 0 = lowest.  maximum depends on driver implementation
-    uint8_t rfPower;         // 0 based index, 0 = lowest.  maximum depends on driver implementation
-    uint8_t enabledOnBoot;
+    uint8_t vtx_power;
+    uint8_t vtx_channel; //1-8
+    uint8_t vtx_band; //1=A, 2=B, 3=E, 4=F(Airwaves/Fatshark), 5=Raceband
+    uint8_t vtx_mode; //0=ch+band 1=mhz
+    uint16_t vtx_mhz; //5740
+    vtxChannelActivationCondition_t vtxChannelActivationConditions[MAX_CHANNEL_ACTIVATION_CONDITION_COUNT];
 } vtxConfig_t;
 
 PG_DECLARE(vtxConfig_t, vtxConfig);
 
-// runtime state.
-typedef struct vtxState_s {
-    uint8_t channel;
-    uint8_t band;
-    uint8_t rfPower;
-    uint8_t enabled;
-} vtxState_t;
-
-extern vtxState_t vtxState;
-
-// VTX Control
-void initVTXState(void);
-bool isUsingVTXSwitch(void);
-void updateVTXState(void);
-
-
-// VTX API
-
-// common methods
 void vtxInit(void);
-void vtxIOInit(void);
-void vtxTogglePower(void);
-void handleVTXControlButton(void);
-void vtxSaveState(void);
-
-// hardware specific implementation methods
-void vtxEnable(void);
-void vtxDisable(void);
-void vtxCycleChannel(void);
-void vtxCycleBand(void);
-void vtxCycleRFPower(void); // 0 = lowest
+void vtxIncrementBand(void);
+void vtxDecrementBand(void);
+void vtxIncrementChannel(void);
+void vtxDecrementChannel(void);
+void vtxUpdateActivatedChannel(void);
 

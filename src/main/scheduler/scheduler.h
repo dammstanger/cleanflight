@@ -17,70 +17,150 @@
 
 #pragma once
 
-//#define SCHEDULER_DEBUG
-
-#define TASK_PERIOD_HZ(hz) (1000000 / (hz))
-#define TASK_PERIOD_MS(ms) ((ms) * 1000)
-#define TASK_PERIOD_US(us) (us)
+#include "common/time.h"
 
 typedef enum {
     TASK_PRIORITY_IDLE = 0,     // Disables dynamic scheduling, task is executed only if no other task is active this cycle
     TASK_PRIORITY_LOW = 1,
     TASK_PRIORITY_MEDIUM = 3,
+    TASK_PRIORITY_MEDIUM_HIGH = 4,
     TASK_PRIORITY_HIGH = 5,
     TASK_PRIORITY_REALTIME = 6,
     TASK_PRIORITY_MAX = 255
 } cfTaskPriority_e;
 
-#define TASK_SELF -1
+typedef struct {
+    timeUs_t     maxExecutionTime;
+    timeUs_t     totalExecutionTime;
+    timeUs_t     averageExecutionTime;
+} cfCheckFuncInfo_t;
 
 typedef struct {
     const char * taskName;
+    const char * subTaskName;
     bool         isEnabled;
-    uint32_t     desiredPeriod;
     uint8_t      staticPriority;
-    uint32_t     maxExecutionTime;
-    uint32_t     totalExecutionTime;
-    uint32_t     averageExecutionTime;
-    uint32_t     latestDeltaTime;
+    timeDelta_t  desiredPeriod;
+    timeDelta_t  latestDeltaTime;
+    timeUs_t     maxExecutionTime;
+    timeUs_t     totalExecutionTime;
+    timeUs_t     averageExecutionTime;
 } cfTaskInfo_t;
 
+typedef enum {
+    /* Actual tasks */
+    TASK_SYSTEM = 0,
+    TASK_GYROPID,
+    TASK_ACCEL,
+    TASK_ATTITUDE,
+    TASK_RX,
+    TASK_SERIAL,
+    TASK_DISPATCH,
+    TASK_BATTERY_VOLTAGE,
+    TASK_BATTERY_CURRENT,
+    TASK_BATTERY_ALERTS,
+#ifdef BEEPER
+    TASK_BEEPER,
+#endif
+#ifdef GPS
+    TASK_GPS,
+#endif
+#ifdef MAG
+    TASK_COMPASS,
+#endif
+#ifdef BARO
+    TASK_BARO,
+#endif
+#ifdef SONAR
+    TASK_SONAR,
+#endif
+#if defined(BARO) || defined(SONAR)
+    TASK_ALTITUDE,
+#endif
+#ifdef USE_DASHBOARD
+    TASK_DASHBOARD,
+#endif
+#ifdef TELEMETRY
+    TASK_TELEMETRY,
+#endif
+#ifdef LED_STRIP
+    TASK_LEDSTRIP,
+#endif
+#ifdef TRANSPONDER
+    TASK_TRANSPONDER,
+#endif
+#ifdef STACK_CHECK
+    TASK_STACK_CHECK,
+#endif
+#ifdef OSD
+    TASK_OSD,
+#endif
+#ifdef USE_OSD_SLAVE
+    TASK_OSD_SLAVE,
+#endif
+#ifdef USE_BST
+    TASK_BST_MASTER_PROCESS,
+#endif
+#ifdef USE_ESC_SENSOR
+    TASK_ESC_SENSOR,
+#endif
+#ifdef CMS
+    TASK_CMS,
+#endif
+#ifdef VTX_CONTROL
+    TASK_VTXCTRL,
+#endif
+#ifdef USE_GYRO_DATA_ANALYSE
+    TASK_GYRO_DATA_ANALYSE,
+#endif
+
+    /* Count of real tasks */
+    TASK_COUNT,
+
+    /* Service task IDs */
+    TASK_NONE = TASK_COUNT,
+    TASK_SELF
+} cfTaskId_e;
+
 typedef struct {
-    /* Configuration */
+    // Configuration
     const char * taskName;
-    bool (*checkFunc)(uint32_t currentDeltaTime);
-    void (*taskFunc)(void);
-    uint32_t desiredPeriod;         // target period of execution
+    const char * subTaskName;
+    bool (*checkFunc)(timeUs_t currentTimeUs, timeDelta_t currentDeltaTimeUs);
+    void (*taskFunc)(timeUs_t currentTimeUs);
+    timeDelta_t desiredPeriod;      // target period of execution
     const uint8_t staticPriority;   // dynamicPriority grows in steps of this size, shouldn't be zero
 
-    /* Scheduling */
+    // Scheduling
     uint16_t dynamicPriority;       // measurement of how old task was last executed, used to avoid task starvation
     uint16_t taskAgeCycles;
-    uint32_t lastExecutedAt;        // last time of invocation
-    uint32_t lastSignaledAt;        // time of invocation event for event-driven tasks
+    timeDelta_t taskLatestDeltaTime;
+    timeUs_t lastExecutedAt;        // last time of invocation
+    timeUs_t lastSignaledAt;        // time of invocation event for event-driven tasks
 
-    /* Statistics */
-    uint32_t averageExecutionTime;  // Moving average over 6 samples, used to calculate guard interval
-    uint32_t taskLatestDeltaTime;   //
 #ifndef SKIP_TASK_STATISTICS
-    uint32_t maxExecutionTime;
-    uint32_t totalExecutionTime;    // total time consumed by task since boot
+    // Statistics
+    timeUs_t movingSumExecutionTime;  // moving sum over 32 samples
+    timeUs_t maxExecutionTime;
+    timeUs_t totalExecutionTime;    // total time consumed by task since boot
 #endif
 } cfTask_t;
 
+extern cfTask_t cfTasks[TASK_COUNT];
 extern uint16_t averageSystemLoadPercent;
 
-extern cfTask_t* taskQueueArray[];
-extern const uint32_t taskQueueArraySize;
-extern const uint32_t taskCount;
-extern cfTask_t cfTasks[];
-
-void getTaskInfo(const int taskId, cfTaskInfo_t *taskInfo);
-void rescheduleTask(const int taskId, uint32_t newPeriodMicros);
-void setTaskEnabled(const int taskId, bool newEnabledState);
-uint32_t getTaskDeltaTime(const int taskId);
+void getCheckFuncInfo(cfCheckFuncInfo_t *checkFuncInfo);
+void getTaskInfo(cfTaskId_e taskId, cfTaskInfo_t *taskInfo);
+void rescheduleTask(cfTaskId_e taskId, uint32_t newPeriodMicros);
+void setTaskEnabled(cfTaskId_e taskId, bool newEnabledState);
+timeDelta_t getTaskDeltaTime(cfTaskId_e taskId);
+void schedulerSetCalulateTaskStatistics(bool calculateTaskStatistics);
+void schedulerResetTaskStatistics(cfTaskId_e taskId);
 
 void schedulerInit(void);
 void scheduler(void);
+void taskSystem(timeUs_t currentTime);
 
-#define isSystemOverloaded() (averageSystemLoadPercent > 100)
+#define LOAD_PERCENTAGE_ONE 100
+
+#define isSystemOverloaded() (averageSystemLoadPercent >= LOAD_PERCENTAGE_ONE)

@@ -29,14 +29,16 @@ typedef enum {
 typedef enum {
     FD_ROLL = 0,
     FD_PITCH,
-    FD_YAW,
-    FD_INDEX_COUNT
+    FD_YAW
 } flight_dynamics_index_t;
 
+#define FLIGHT_DYNAMICS_INDEX_COUNT 3
 
 typedef enum {
     AI_ROLL = 0,
-    AI_PITCH,
-    ANGLE_INDEX_COUNT
+    AI_PITCH
 } angle_index_t;
 
+#define ANGLE_INDEX_COUNT 2
+
+#define GET_DIRECTION(isReversed) ((isReversed) ? -1 : 1)

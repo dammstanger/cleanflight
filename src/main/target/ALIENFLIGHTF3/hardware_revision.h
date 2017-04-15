@@ -14,10 +14,11 @@
  * You should have received a copy of the GNU General Public License
  * along with Cleanflight.  If not, see <http://www.gnu.org/licenses/>.
  */
+#pragma once
 
 typedef enum awf3HardwareRevision_t {
-    UNKNOWN = 0,
-    AFF3_REV_1, // MPU6050 / MPU9150 (I2C)
+    AFF3_UNKNOWN = 0,
+    AFF3_REV_1, // MPU6050 (I2C)
     AFF3_REV_2  // MPU6500 / MPU9250 (SPI)
 } awf3HardwareRevision_e;
 
@@ -25,3 +26,6 @@ extern uint8_t hardwareRevision;
 
 void updateHardwareRevision(void);
 void detectHardwareRevision(void);
+
+struct extiConfig_s;
+const struct extiConfig_s *selectMPUIntExtiConfigByHardwareRevision(void);

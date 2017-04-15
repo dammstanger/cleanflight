@@ -19,12 +19,10 @@
 #include <stdint.h>
 #include <stdlib.h>
 
-#include <platform.h>
-#include "build/build_config.h"
+#include "platform.h"
 
 #include "common/axis.h"
 #include "common/maths.h"
-#include "common/time.h"
 
 #include "system.h"
 #include "exti.h"
@@ -36,28 +34,14 @@
 #include "accgyro_mpu.h"
 #include "accgyro_mpu6500.h"
 
-extern uint8_t mpuIntDenominator;
-
-static bool mpu6500ReadTemp(int16_t *tempData)
+void mpu6500AccInit(accDev_t *acc)
 {
-    uint8_t buf[2];
-    if (!mpuConfiguration.read(MPU_RA_TEMP_OUT_H, 2, buf)) {
-        return false;
-    }
-
-    // MPU-6500-Datasheet2.pdf P12
-    const int16_t RoomTemp_Offset = 21;
-    const int16_t Temp_Sensitivity = 333;
-
-    // RM-MPU-6500A-00.pdf P33
-    *tempData = RoomTemp_Offset + ((int16_t)(buf[0] << 8 | buf[1]) - RoomTemp_Offset) / Temp_Sensitivity;
-
-    return true;
+    acc->acc_1G = 512 * 4;
 }
 
-bool mpu6500AccDetect(acc_t *acc)
+bool mpu6500AccDetect(accDev_t *acc)
 {
-    if (mpuDetectionResult.sensor != MPU_65xx_I2C) {
+    if (acc->mpuDetectionResult.sensor != MPU_65xx_I2C) {
         return false;
     }
 
@@ -67,78 +51,54 @@ bool mpu6500AccDetect(acc_t *acc)
     return true;
 }
 
-bool mpu6500GyroDetect(gyro_t *gyro)
+void mpu6500GyroInit(gyroDev_t *gyro)
 {
-    if (mpuDetectionResult.sensor != MPU_65xx_I2C) {
+    mpuGyroInit(gyro);
+
+    gyro->mpuConfiguration.writeFn(&gyro->bus, MPU_RA_PWR_MGMT_1, MPU6500_BIT_RESET);
+    delay(100);
+    gyro->mpuConfiguration.writeFn(&gyro->bus, MPU_RA_SIGNAL_PATH_RESET, 0x07);
+    delay(100);
+    gyro->mpuConfiguration.writeFn(&gyro->bus, MPU_RA_PWR_MGMT_1, 0);
+    delay(100);
+    gyro->mpuConfiguration.writeFn(&gyro->bus, MPU_RA_PWR_MGMT_1, INV_CLK_PLL);
+    delay(15);
+    const uint8_t raGyroConfigData = gyro->gyroRateKHz > GYRO_RATE_8_kHz ? (INV_FSR_2000DPS << 3 | FCB_3600_32) : (INV_FSR_2000DPS << 3 | FCB_DISABLED);
+    gyro->mpuConfiguration.writeFn(&gyro->bus, MPU_RA_GYRO_CONFIG, raGyroConfigData);
+    delay(15);
+    gyro->mpuConfiguration.writeFn(&gyro->bus, MPU_RA_ACCEL_CONFIG, INV_FSR_16G << 3);
+    delay(15);
+    gyro->mpuConfiguration.writeFn(&gyro->bus, MPU_RA_CONFIG, gyro->lpf);
+    delay(15);
+    gyro->mpuConfiguration.writeFn(&gyro->bus, MPU_RA_SMPLRT_DIV, gyroMPU6xxxGetDividerDrops(gyro)); // Get Divider Drops
+    delay(100);
+
+    // Data ready interrupt configuration
+#ifdef USE_MPU9250_MAG
+    gyro->mpuConfiguration.writeFn(&gyro->bus, MPU_RA_INT_PIN_CFG, MPU6500_BIT_INT_ANYRD_2CLEAR | MPU6500_BIT_BYPASS_EN);  // INT_ANYRD_2CLEAR, BYPASS_EN
+#else
+    gyro->mpuConfiguration.writeFn(&gyro->bus, MPU_RA_INT_PIN_CFG, MPU6500_BIT_INT_ANYRD_2CLEAR);  // INT_ANYRD_2CLEAR
+#endif
+    delay(15);
+
+#ifdef USE_MPU_DATA_READY_SIGNAL
+    gyro->mpuConfiguration.writeFn(&gyro->bus, MPU_RA_INT_ENABLE, MPU6500_BIT_RAW_RDY_EN); // RAW_RDY_EN interrupt enable
+#endif
+    delay(15);
+}
+
+bool mpu6500GyroDetect(gyroDev_t *gyro)
+{
+    if (gyro->mpuDetectionResult.sensor != MPU_65xx_I2C) {
         return false;
     }
 
     gyro->init = mpu6500GyroInit;
     gyro->read = mpuGyroRead;
-    gyro->temperature = mpu6500ReadTemp;
+    gyro->intStatus = mpuCheckDataReady;
 
     // 16.4 dps/lsb scalefactor
     gyro->scale = 1.0f / 16.4f;
 
     return true;
-}
-
-void mpu6500AccInit(acc_t *acc)
-{
-    mpuIntExtiInit();
-
-    acc->acc_1G = 512 * 8;
-}
-
-void mpu6500GyroInit(gyro_t* gyro, uint8_t lpf)
-{
-    uint16_t intFrequencyHz;
-    switch(lpf) {
-        case 0:
-            intFrequencyHz = 8000;
-        break;
-        default:
-            intFrequencyHz = 1000;
-        break;
-    }
-
-    mpuIntDenominator = intFrequencyHz / gyro->sampleFrequencyHz;
-
-    // handle cases where the refresh period was set higher than the LPF allows
-    if (mpuIntDenominator == 0) {
-        mpuIntDenominator = 1;
-        gyro->sampleFrequencyHz = intFrequencyHz;
-    }
-
-    mpuIntExtiInit();
-
-    mpuConfiguration.write(MPU_RA_PWR_MGMT_1, MPU6500_BIT_RESET);
-    delay(100);
-    mpuConfiguration.write(MPU_RA_SIGNAL_PATH_RESET, 0x07);
-    delay(100);
-    mpuConfiguration.write(MPU_RA_PWR_MGMT_1, 0);
-    delay(100);
-    mpuConfiguration.write(MPU_RA_PWR_MGMT_1, INV_CLK_PLL);
-    delay(15);
-    mpuConfiguration.write(MPU_RA_GYRO_CONFIG, INV_FSR_2000DPS << 3);
-    delay(15);
-    mpuConfiguration.write(MPU_RA_ACCEL_CONFIG, INV_FSR_8G << 3);
-    delay(15);
-    mpuConfiguration.write(MPU_RA_CONFIG, lpf);
-    delay(15);
-    mpuConfiguration.write(MPU_RA_SMPLRT_DIV, 0);
-    delay(100);
-
-    // Data ready interrupt configuration
-#ifdef USE_MPU9250_MAG
-    mpuConfiguration.write(MPU_RA_INT_PIN_CFG, 0 << 7 | 0 << 6 | 0 << 5 | 1 << 4 | 0 << 3 | 0 << 2 | 1 << 1 | 0 << 0);  // INT_ANYRD_2CLEAR, BYPASS_EN
-#else
-    mpuConfiguration.write(MPU_RA_INT_PIN_CFG, 0 << 7 | 0 << 6 | 0 << 5 | 1 << 4 | 0 << 3 | 0 << 2 | 0 << 1 | 0 << 0);  // INT_ANYRD_2CLEAR, BYPASS_EN
-#endif
-
-    delay(15);
-
-#ifdef USE_MPU_DATA_READY_SIGNAL
-    mpuConfiguration.write(MPU_RA_INT_ENABLE, 0x01); // RAW_RDY_EN interrupt enable
-#endif
 }

@@ -22,7 +22,7 @@
 
 #define M25P16_PAGESIZE 256
 
-bool m25p16_init();
+bool m25p16_init(const flashConfig_t *flashConfig);
 
 void m25p16_eraseSector(uint32_t address);
 void m25p16_eraseCompletely();
@@ -38,14 +38,5 @@ int m25p16_readBytes(uint32_t address, uint8_t *buffer, int length);
 bool m25p16_isReady();
 bool m25p16_waitForReady(uint32_t timeoutMillis);
 
-const flashGeometry_t* m25p16_getGeometry();
-
-#ifdef CUSTOM_FLASHCHIP
-typedef struct flashchipConfig_s {
-    uint32_t flashchip_id;
-    uint16_t flashchip_nsect;
-    uint16_t flashchip_pps;
-} flashchipConfig_t;
-
-PG_DECLARE(flashchipConfig_t, flashchipConfig);
-#endif
+struct flashGeometry_s;
+const struct flashGeometry_s* m25p16_getGeometry();

@@ -17,8 +17,6 @@
 
 #pragma once
 
-#include <stdint.h>
-
 typedef enum FlightLogFieldCondition {
     FLIGHT_LOG_FIELD_CONDITION_ALWAYS = 0,
     FLIGHT_LOG_FIELD_CONDITION_AT_LEAST_MOTORS_1,
@@ -82,7 +80,10 @@ typedef enum FlightLogFieldPredictor {
     FLIGHT_LOG_FIELD_PREDICTOR_VBATREF        = 9,
 
     //Predict the last time value written in the main stream
-    FLIGHT_LOG_FIELD_PREDICTOR_LAST_MAIN_FRAME_TIME = 10
+    FLIGHT_LOG_FIELD_PREDICTOR_LAST_MAIN_FRAME_TIME = 10,
+
+    //Predict that this field is the minimum motor output
+    FLIGHT_LOG_FIELD_PREDICTOR_MINMOTOR       = 11
 
 } FlightLogFieldPredictor;
 
@@ -105,13 +106,18 @@ typedef enum FlightLogEvent {
     FLIGHT_LOG_EVENT_SYNC_BEEP = 0,
     FLIGHT_LOG_EVENT_INFLIGHT_ADJUSTMENT = 13,
     FLIGHT_LOG_EVENT_LOGGING_RESUME = 14,
-    FLIGHT_LOG_EVENT_GTUNE_RESULT = 20,
+    FLIGHT_LOG_EVENT_FLIGHTMODE = 30, // Add new event type for flight mode status.
     FLIGHT_LOG_EVENT_LOG_END = 255
 } FlightLogEvent;
 
 typedef struct flightLogEvent_syncBeep_s {
     uint32_t time;
 } flightLogEvent_syncBeep_t;
+
+typedef struct flightLogEvent_flightMode_s { // New Event Data type
+    uint32_t flags;
+    uint32_t lastFlags;
+} flightLogEvent_flightMode_t;
 
 typedef struct flightLogEvent_inflightAdjustment_s {
     uint8_t adjustmentFunction;
@@ -135,6 +141,7 @@ typedef struct flightLogEvent_gtuneCycleResult_s {
 
 typedef union flightLogEventData_u {
     flightLogEvent_syncBeep_t syncBeep;
+    flightLogEvent_flightMode_t flightMode; // New event data
     flightLogEvent_inflightAdjustment_t inflightAdjustment;
     flightLogEvent_loggingResume_t loggingResume;
     flightLogEvent_gtuneCycleResult_t gtuneCycleResult;

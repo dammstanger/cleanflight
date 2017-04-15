@@ -19,30 +19,30 @@
 #include <stdint.h>
 #include <math.h>
 
-#include <platform.h>
+#include "platform.h"
+
+#ifdef SONAR
+
 #include "build/build_config.h"
 
 #include "common/maths.h"
-#include "common/axis.h"
+#include "common/utils.h"
 
-#include "config/parameter_group.h"
 #include "config/feature.h"
+#include "config/parameter_group.h"
+#include "config/parameter_group_ids.h"
 
-#include "drivers/sonar_hcsr04.h"
-#include "drivers/gpio.h"
+#include "drivers/io.h"
 
 #include "fc/runtime_config.h"
-#include "fc/config.h"
 
-#include "sensors/sonar.h"
 #include "sensors/sensors.h"
+#include "sensors/battery.h"
+#include "sensors/sonar.h"
 
 // Sonar measurements are in cm, a value of SONAR_OUT_OF_RANGE indicates sonar is not in range.
 // Inclination is adjusted by imu
-    float baro_cf_vel;                      // apply Complimentary Filter to keep the calculated velocity based on baro velocity (i.e. near real velocity)
-    float baro_cf_alt;                      // apply CF to use ACC for height estimation
 
-#ifdef SONAR
 int16_t sonarMaxRangeCm;
 int16_t sonarMaxAltWithTiltCm;
 int16_t sonarCfAltCm; // Complimentary Filter altitude
@@ -51,55 +51,19 @@ float sonarMaxTiltCos;
 
 static int32_t calculatedAltitude;
 
-const sonarHardware_t *sonarGetHardwareConfiguration(bool usingCurrentMeterIOPins)
-{
-#if defined(SONAR_PWM_TRIGGER_PIN)
-    static const sonarHardware_t const sonarPWM = {
-        .trigger_pin = SONAR_PWM_TRIGGER_PIN,
-        .trigger_gpio = SONAR_PWM_TRIGGER_GPIO,
-        .echo_pin = SONAR_PWM_ECHO_PIN,
-        .echo_gpio = SONAR_PWM_ECHO_GPIO,
-        .triggerIO = IO_TAG(SONAR_PWM_TRIGGER_IO),
-        .echoIO = IO_TAG(SONAR_PWM_ECHO_IO),
-    };
-#endif
-#if !defined(UNIT_TEST)
-    static const sonarHardware_t sonarRC = {
-        .trigger_pin = SONAR_TRIGGER_PIN,
-        .trigger_gpio = SONAR_TRIGGER_GPIO,
-        .echo_pin = SONAR_ECHO_PIN,
-        .echo_gpio = SONAR_ECHO_GPIO,
-        .triggerIO = IO_TAG(SONAR_TRIGGER_IO),
-        .echoIO = IO_TAG(SONAR_ECHO_IO),
-    };
-#endif
+PG_REGISTER_WITH_RESET_TEMPLATE(sonarConfig_t, sonarConfig, PG_SONAR_CONFIG, 0);
 
-// FIXME compare the actual IO pins rather than assuming the features clash.
-#if defined(SONAR_PWM_TRIGGER_PIN)
-    // If we are using softserial, parallel PWM or ADC current sensor, then use motor pins 5 and 6 for sonar, otherwise use RC pins 7 and 8
-    if (feature(FEATURE_SOFTSERIAL)
-            || feature(FEATURE_RX_PARALLEL_PWM )
-            || usingCurrentMeterIOPins) {
-        return &sonarPWM;
-    } else {
-        return &sonarRC;
-    }
-#elif defined(SONAR_TRIGGER_PIN)
-    UNUSED(usingCurrentMeterIOPins);
-    return &sonarRC;
-#elif defined(UNIT_TEST)
-    UNUSED(usingCurrentMeterIOPins);
-    return 0;
-#else
-#error Sonar not defined for target
-#endif
-}
+PG_RESET_TEMPLATE(sonarConfig_t, sonarConfig,
+    .triggerTag = IO_TAG(SONAR_TRIGGER_PIN),
+    .echoTag = IO_TAG(SONAR_ECHO_PIN)
+);
 
-void sonarInit(const sonarHardware_t *sonarHardware)
+void sonarInit(const sonarConfig_t *sonarConfig)
 {
     sonarRange_t sonarRange;
 
-    hcsr04_init(sonarHardware, &sonarRange);
+    hcsr04_init(sonarConfig, &sonarRange);
+
     sensorsSet(SENSOR_SONAR);
     sonarMaxRangeCm = sonarRange.maxRangeCm;
     sonarCfAltCm = sonarMaxRangeCm / 2;
@@ -135,8 +99,9 @@ static int32_t applySonarMedianFilter(int32_t newSonarReading)
         return newSonarReading;
 }
 
-void sonarUpdate(void)
+void sonarUpdate(timeUs_t currentTimeUs)
 {
+    UNUSED(currentTimeUs);
     hcsr04_start_reading();
 }
 

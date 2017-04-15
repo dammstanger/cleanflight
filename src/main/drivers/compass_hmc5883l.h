@@ -17,21 +17,6 @@
 
 #pragma once
 
-#include "io.h"
+#include "io_types.h"
 
-typedef struct hmc5883Config_s {
-#ifdef STM32F303
-    uint32_t gpioAHBPeripherals;
-#endif
-#ifdef STM32F10X
-    uint32_t gpioAPB2Peripherals;
-#endif
-    uint16_t gpioPin;
-    GPIO_TypeDef *gpioPort;
-
-    ioTag_t intIO;
-} hmc5883Config_t;
-
-bool hmc5883lDetect(mag_t* mag, const hmc5883Config_t *hmc5883ConfigToUse);
-bool hmc5883lInit(void);
-bool hmc5883lRead(int16_t *magData);
+bool hmc5883lDetect(magDev_t* mag, ioTag_t interruptTag);

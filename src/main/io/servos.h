@@ -17,9 +17,3 @@
 
 #pragma once
 
-typedef struct servoConfig_s {
-    uint16_t servoCenterPulse;              // This is the value for servos when they should be in the middle. e.g. 1500.
-    uint16_t servo_pwm_rate;                // The update rate of servo outputs (50-498Hz)
-} servoConfig_t;
-
-PG_DECLARE(servoConfig_t, servoConfig);
