@@ -15,30 +15,45 @@
  * along with Cleanflight.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include <stdbool.h>
-#include <stdint.h>
+#include "platform.h"
 
-#include <platform.h>
+#include "io.h"
+#include "io_impl.h"
 
-#include "build/build_config.h"
+#include "light_led.h"
 
-#include "config/parameter_group.h"
-#include "config/parameter_group_ids.h"
+static IO_t leds[LED_NUMBER];
+static uint8_t ledPolarity = 0;
 
-#include "config/profile.h"
-
-PG_REGISTER(profileSelection_t, profileSelection, PG_PROFILE_SELECTION, 0);
-
-uint8_t getCurrentProfile(void)
+void ledInit(const statusLedConfig_t *statusLedConfig)
 {
-    return profileSelection()->current_profile_index;
+    LED0_OFF;
+    LED1_OFF;
+    LED2_OFF;
+
+    ledPolarity = statusLedConfig->polarity;
+    for (int i = 0; i < LED_NUMBER; i++) {
+        if (statusLedConfig->ledTags[i]) {
+            leds[i] = IOGetByTag(statusLedConfig->ledTags[i]);
+            IOInit(leds[i], OWNER_LED, RESOURCE_INDEX(i));
+            IOConfigGPIO(leds[i], IOCFG_OUT_PP);
+        } else {
+            leds[i] = IO_NONE;
+        }
+    }
+
+    LED0_OFF;
+    LED1_OFF;
+    LED2_OFF;
 }
 
-void setProfile(uint8_t profileIndex)
+void ledToggle(int led)
 {
-    if (profileIndex >= MAX_PROFILE_COUNT) // sanity check
-        profileIndex = 0;
-
-    profileSelection()->current_profile_index = profileIndex;
+    IOToggle(leds[led]);
 }
 
+void ledSet(int led, bool on)
+{
+    const bool inverted = (1 << (led)) & ledPolarity;
+    IOWrite(leds[led], on ? inverted : !inverted);
+}
