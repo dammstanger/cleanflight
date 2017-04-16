@@ -1,7 +1,7 @@
 /*
 *****************************************************************************
 **
-**  File        : stm32_flash.ld
+**  File        : stm32_flash_split.ld
 **
 **  Abstract    : Common linker script for STM32 devices.
 **
@@ -51,7 +51,7 @@ SECTIONS
 
     . = ALIGN(4);
     _etext = .;        /* define a global symbols at end of code */
-  } >FLASH
+  } >FLASH1
 
 
    .ARM.extab   : { *(.ARM.extab* .gnu.linkonce.armextab.*) } >FLASH

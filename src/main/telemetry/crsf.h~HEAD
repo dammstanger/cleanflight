@@ -17,26 +17,19 @@
 
 #pragma once
 
-typedef struct mspPacket_s {
-    sbuf_t buf;
-    int16_t cmd;
-    int16_t result;
-} mspPacket_t;
+#include "common/time.h"
 
-void mspInit(void);
+typedef enum {
+    CRSF_FRAME_START = 0,
+    CRSF_FRAME_ATTITUDE = CRSF_FRAME_START,
+    CRSF_FRAME_BATTERY_SENSOR,
+    CRSF_FRAME_FLIGHT_MODE,
+    CRSF_FRAME_GPS
+} crsfFrameType_e;
 
-//
-// server
-//
-int mspProcessCommand(mspPacket_t *command, mspPacket_t *reply);
+void initCrsfTelemetry(void);
+bool checkCrsfTelemetryState(void);
+void handleCrsfTelemetry(timeUs_t currentTimeUs);
 
-// return positive for ACK, negative on error, zero for no reply
-int mspServerCommandHandler(mspPacket_t *cmd, mspPacket_t *reply);
+int getCrsfFrame(uint8_t *frame, crsfFrameType_e frameType);
 
-//
-// client
-//
-void mspProcessReply(mspPacket_t *reply);
-
-// return positive for ACK, negative on error
-int mspClientReplyHandler(mspPacket_t *reply);

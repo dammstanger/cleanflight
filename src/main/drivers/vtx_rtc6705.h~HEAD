@@ -15,25 +15,24 @@
  * along with Cleanflight.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include "stdbool.h"
-#include "stdint.h"
+/*
+ * Author: Giles Burgess (giles@multiflite.co.uk)
+ *
+ * This source code is provided as is and can be used/modified so long
+ * as this header is maintained with the file at all times.
+ */
 
-#include <platform.h>
+#pragma once
 
-#include "config/parameter_group.h"
+#include <stdint.h>
 
-#include "drivers/gpio.h"
-#include "drivers/timer.h"
-#include "drivers/pwm_mapping.h"
-#include "flight/mixer.h"
-#include "flight/servos.h"
+#define RTC6705_BAND_MIN    1
+#define RTC6705_BAND_MAX    5
+#define RTC6705_CHANNEL_MIN 1
+#define RTC6705_CHANNEL_MAX 8
+#define RTC6705_FREQ_MIN    5600
+#define RTC6705_FREQ_MAX    5950
 
-#include "build/build_config.h"
-
-#if MAX_PWM_MOTORS != MAX_SUPPORTED_MOTORS
-#error Motor configuration mismatch
-#endif
-
-#if MAX_PWM_SERVOS != MAX_SUPPORTED_SERVOS
-#error Servo configuration mismatch
-#endif
+bool rtc6705Init(void);
+void rtc6705SetChannel(uint8_t band, uint8_t channel);
+void rtc6705SetFreq(uint16_t freq);

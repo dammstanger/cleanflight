@@ -15,24 +15,45 @@
  * along with Cleanflight.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-typedef enum {
-    // NOTE: only add new ones to the end of this list (before DEBUG_MODE_COUNT), otherwise a PG version bump is required.
-    DEBUG_NONE,
-    DEBUG_CYCLETIME,
-    DEBUG_NOTCH,
-    DEBUG_GYRO,
-    DEBUG_PIDLOOP,
-    DEBUG_GYRO_SYNC,
-#ifdef OSD
-    DEBUG_OSD,
-    DEBUG_OSD_WATCHDOG,
-#endif
+#include "platform.h"
 
-    DEBUG_MODE_COUNT
-} debugMode_e;
+#include "io.h"
+#include "io_impl.h"
 
-typedef struct debugConfig_s {
-    uint8_t debug_mode;
-} debugConfig_t;
+#include "light_led.h"
 
-PG_DECLARE(debugConfig_t, debugConfig);
+static IO_t leds[LED_NUMBER];
+static uint8_t ledPolarity = 0;
+
+void ledInit(const statusLedConfig_t *statusLedConfig)
+{
+    LED0_OFF;
+    LED1_OFF;
+    LED2_OFF;
+
+    ledPolarity = statusLedConfig->polarity;
+    for (int i = 0; i < LED_NUMBER; i++) {
+        if (statusLedConfig->ledTags[i]) {
+            leds[i] = IOGetByTag(statusLedConfig->ledTags[i]);
+            IOInit(leds[i], OWNER_LED, RESOURCE_INDEX(i));
+            IOConfigGPIO(leds[i], IOCFG_OUT_PP);
+        } else {
+            leds[i] = IO_NONE;
+        }
+    }
+
+    LED0_OFF;
+    LED1_OFF;
+    LED2_OFF;
+}
+
+void ledToggle(int led)
+{
+    IOToggle(leds[led]);
+}
+
+void ledSet(int led, bool on)
+{
+    const bool inverted = (1 << (led)) & ledPolarity;
+    IOWrite(leds[led], on ? inverted : !inverted);
+}

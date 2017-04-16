@@ -1,55 +1,36 @@
-/*
- * This file is part of Cleanflight.
- *
- * Cleanflight is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * Cleanflight is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with Cleanflight.  If not, see <http://www.gnu.org/licenses/>.
- */
-
-#include <stdbool.h>
 #include <stdint.h>
+#include <stdbool.h>
 #include <stdlib.h>
+#include <stdarg.h>
 #include <string.h>
 
-#include <platform.h>
+#include "platform.h"
 
-#include "build/build_config.h"
-
-#include "common/maths.h"
-#include "common/encoding.h"
-
-#include "config/parameter_group.h"
-
-#include "drivers/serial.h"
-#include "drivers/gyro_sync.h"
-#include "common/streambuf.h"
-
-#include "fc/fc_serial.h"
-
-#include "io/serial.h"
-#include "msp/msp.h"
-#include "msp/msp_serial.h"
-
-#include "common/printf.h"
-
-#include "io/flashfs.h"
-#include "io/asyncfatfs/asyncfatfs.h"
+#ifdef BLACKBOX
 
 #include "blackbox.h"
 #include "blackbox_io.h"
 
-#ifdef BLACKBOX
+#include "build/version.h"
+#include "build/build_config.h"
 
-extern uint32_t targetPidLooptime; // FIXME dependency on pid.h
+#include "common/encoding.h"
+#include "common/maths.h"
+#include "common/printf.h"
+
+#include "config/parameter_group.h"
+#include "config/parameter_group_ids.h"
+
+#include "fc/config.h"
+#include "fc/rc_controls.h"
+
+#include "flight/pid.h"
+
+#include "io/asyncfatfs/asyncfatfs.h"
+#include "io/flashfs.h"
+#include "io/serial.h"
+
+#include "msp/msp_serial.h"
 
 #define BLACKBOX_SERIAL_PORT_MODE MODE_TX
 
@@ -80,7 +61,18 @@ static struct {
     } state;
 } blackboxSDCard;
 
+#define LOGFILE_PREFIX "LOG"
+#define LOGFILE_SUFFIX "BFL"
+
 #endif
+
+void blackboxOpen()
+{
+    serialPort_t *sharedBlackboxAndMspPort = findSharedSerialPort(FUNCTION_BLACKBOX, FUNCTION_MSP);
+    if (sharedBlackboxAndMspPort) {
+        mspSerialReleasePortIfAllocated(sharedBlackboxAndMspPort);
+    }
+}
 
 void blackboxWrite(uint8_t value)
 {
@@ -132,12 +124,14 @@ int blackboxPrintf(const char *fmt, ...)
  * printf a Blackbox header line with a leading "H " and trailing "\n" added automatically. blackboxHeaderBudget is
  * decreased to account for the number of bytes written.
  */
-void blackboxPrintfHeaderLine(const char *fmt, ...)
+void blackboxPrintfHeaderLine(const char *name, const char *fmt, ...)
 {
     va_list va;
 
     blackboxWrite('H');
     blackboxWrite(' ');
+    blackboxPrint(name);
+    blackboxWrite(':');
 
     va_start(va, fmt);
 
@@ -232,8 +226,7 @@ void blackboxWriteS16(int16_t value)
 /**
  * Write a 2 bit tag followed by 3 signed fields of 2, 4, 6 or 32 bits
  */
-void blackboxWriteTag2_3S32(int32_t *values)
-{
+void blackboxWriteTag2_3S32(int32_t *values) {
     static const int NUM_FIELDS = 3;
 
     //Need to be enums rather than const ints if we want to switch on them (due to being C)
@@ -357,8 +350,7 @@ void blackboxWriteTag2_3S32(int32_t *values)
 /**
  * Write an 8-bit selector followed by four signed fields of size 0, 4, 8 or 16 bits.
  */
-void blackboxWriteTag8_4S16(int32_t *values)
-{
+void blackboxWriteTag8_4S16(int32_t *values) {
 
     //Need to be enums rather than const ints if we want to switch on them (due to being C)
     enum {
@@ -495,7 +487,7 @@ void blackboxWriteFloat(float value)
 
 /**
  * If there is data waiting to be written to the blackbox device, attempt to write (a portion of) that now.
- * 
+ *
  * Intended to be called regularly for the blackbox device to perform housekeeping.
  */
 void blackboxDeviceFlush(void)
@@ -563,7 +555,7 @@ bool blackboxDeviceOpen(void)
                 }
 
                 blackboxPortSharing = determinePortSharing(portConfig, FUNCTION_BLACKBOX);
-                baudRateIndex = portConfig->baudRates[BAUDRATE_BLACKBOX];
+                baudRateIndex = portConfig->blackbox_baudrateIndex;
 
                 if (baudRates[baudRateIndex] == 230400) {
                     /*
@@ -619,6 +611,41 @@ bool blackboxDeviceOpen(void)
             return false;
     }
 }
+
+/**
+ * Erase all blackbox logs
+ */
+#ifdef USE_FLASHFS
+void blackboxEraseAll(void)
+{
+    switch (blackboxConfig()->device) {
+    case BLACKBOX_DEVICE_FLASH:
+        flashfsEraseCompletely();
+        break;
+    default:
+        //not supported
+        break;
+
+    }
+}
+
+/**
+ * Check to see if erasing is done
+ */
+bool isBlackboxErased(void)
+{
+    switch (blackboxConfig()->device) {
+    case BLACKBOX_DEVICE_FLASH:
+        return flashfsIsReady();
+        break;
+    default:
+    //not supported
+        return true;
+        break;
+
+    }
+}
+#endif
 
 /**
  * Close the Blackbox logging device immediately without attempting to flush any remaining data.
@@ -678,22 +705,12 @@ static void blackboxCreateLogFile()
 {
     uint32_t remainder = blackboxSDCard.largestLogFileNumber + 1;
 
-    char filename[13];
-
-    filename[0] = 'L';
-    filename[1] = 'O';
-    filename[2] = 'G';
+    char filename[] = LOGFILE_PREFIX "00000." LOGFILE_SUFFIX;
 
     for (int i = 7; i >= 3; i--) {
         filename[i] = (remainder % 10) + '0';
         remainder /= 10;
     }
-
-    filename[8] = '.';
-    filename[9] = 'T';
-    filename[10] = 'X';
-    filename[11] = 'T';
-    filename[12] = 0;
 
     blackboxSDCard.state = BLACKBOX_SDCARD_WAITING;
 
@@ -727,10 +744,8 @@ static bool blackboxSDCardBeginLog()
             while (afatfs_findNext(blackboxSDCard.logDirectory, &blackboxSDCard.logDirectoryFinder, &directoryEntry) == AFATFS_OPERATION_SUCCESS) {
                 if (directoryEntry && !fat_isDirectoryEntryTerminator(directoryEntry)) {
                     // If this is a log file, parse the log number from the filename
-                    if (
-                        directoryEntry->filename[0] == 'L' && directoryEntry->filename[1] == 'O' && directoryEntry->filename[2] == 'G'
-                        && directoryEntry->filename[8] == 'T' && directoryEntry->filename[9] == 'X' && directoryEntry->filename[10] == 'T'
-                    ) {
+                    if (strncmp(directoryEntry->filename, LOGFILE_PREFIX, strlen(LOGFILE_PREFIX)) == 0
+                        && strncmp(directoryEntry->filename + 8, LOGFILE_SUFFIX, strlen(LOGFILE_SUFFIX)) == 0) {
                         char logSequenceNumberString[6];
 
                         memcpy(logSequenceNumberString, directoryEntry->filename + 3, 5);
